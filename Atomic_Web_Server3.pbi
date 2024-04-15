@@ -360,7 +360,7 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_Server\WWWIndex.s = "index.html"
     *Atomic_Server\WWWError.s = "error.html"
     *Atomic_Server\maxclients = maxclients
-    *Atomic_Server\BufferSize = 1024*64 ;1024*32 6.8sec
+    *Atomic_Server\BufferSize = 1024*32
     *Atomic_server\timeout = 10000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 

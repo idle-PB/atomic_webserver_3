@@ -91,19 +91,14 @@ EndProcedure
 
 Runtime Procedure ElementsFillCode(*request.Atomic_Server_Request) 
   Protected  *Atomic_Server.Atomic_Server = *request\serverid 
-  Protected fn,*buffer,file$ 
-  
-  If FindString(*request\host,"..") = 0  
-  
-  fn = OpenFile(#PB_Any,*Atomic_Server\WWWDirectory + *request\host + "/bm_search.pb") 
+  Protected fn,*buffer 
+  fn = OpenFile(#PB_Any,*Atomic_Server\WWWDirectory + "bm_search.pb") 
   If fn 
     *buffer = AllocateMemory(Lof(fn)) 
      ReadData(fn,*buffer,Lof(fn)) 
      CloseFile(fn) 
      ProcedureReturn *buffer 
-   EndIf    
-   
-  EndIf  
+  EndIf    
      
 EndProcedure   
 

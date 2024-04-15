@@ -22,7 +22,7 @@
 				<nav>
 					<ul>
 						<li><a href="index.html">Home</a></li>
-						<li><a href="emoji-list.html">Emoji list</a></li>
+						<li><a href="generic.html">Generic</a></li>
 						<li><a href="elements.html"  class="active">Elements</a></li>
 					</ul>
 				</nav>
@@ -51,8 +51,11 @@
 									<hr />
 									<h3>Blockquote</h3>
 									<blockquote>Fringilla nisl. Donec accumsan interdum nisi, quis tincidunt felis sagittis eget tempus euismod. Vestibulum ante ipsum primis in faucibus vestibulum. Blandit adipiscing eu felis iaculis volutpat ac adipiscing accumsan faucibus. Vestibulum ante ipsum primis in faucibus lorem ipsum dolor sit amet nullam adipiscing eu felis.</blockquote>
-									<h3>Preformatted output from ElementsFillCode() callback</h3>
-									<pre><code><?PB ElementsFillCode()/></code></pre>
+									<h3>Preformatted</h3>
+									<pre><code>server1 = Atomic_Server_Init("Atomic Webserver #1","www/","127.0.0.1",80,#PB_Network_IPv4,5000,@CBPost(),@CBGet());
+Atomic_Server_Add_Handler(server1,"foo",@URIfoo()); 
+Atomic_Server_start(server1); 
+</code></pre>
 								</section>
 
 							<!-- Lists -->
