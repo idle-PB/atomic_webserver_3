@@ -517,7 +517,7 @@ Procedure Atomic_Search(*pinput,inlen,*pat.ara,palen,pos=0)
   len = inlen - palen
   If pos = 0  
     For i = 0 To 255
-      Skiptable\a[i] = -1;
+      Skiptable\a[i] = 255;
     Next  
     t= palen-1
     For i = 0 To t
