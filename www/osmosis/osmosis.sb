@@ -1,0 +1,398 @@
+ Procedure  myDisplayTransparentSprite(spriteid,x,y,intensity,color)
+
+!  var sprite;
+!
+!  if ((sprite = spider.sprite.objects.Get(v_spriteid)))
+!  {
+    !sprite.alpha = 1.0 / 255 *  v_intensity ;
+!    sprite.color = v_color ;
+
+!    var nbDisplayedSprite = spider.sprite.nbDisplayedSprite;
+!     var displayedSprite;
+!  }
+!  if ((displayedSprite = spider.sprite.cache[nbDisplayedSprite]))
+!  {
+!      // use the cached instance, just update the texture
+!      displayedSprite.setTexture(sprite.texture);
+!   }
+!   else 
+!   {
+!      displayedSprite = new PIXI.Sprite(sprite.texture);
+!      spider.sprite.cache[nbDisplayedSprite] = displayedSprite;
+!
+!      // one time set, As SpiderBasic doesn't allow anchor change
+!      displayedSprite.anchor.x = 0.5;
+!      displayedSprite.anchor.y = 0.5;
+!    
+!      displayedSprite.clipFrame = {}; // create the clipframe object
+!    
+!       spider.screen.stage.addChild(displayedSprite);
+!    }
+!  
+!      // Debug("uv " + displayedSprite.uvs[0]);
+!  
+!  if (sprite.clip)
+!  {
+!    displayedSprite.clip = true;
+!    displayedSprite.clipFrame.x = sprite.clipFrame.x;
+!    displayedSprite.clipFrame.y = sprite.clipFrame.y;
+!    displayedSprite.clipFrame.width = sprite.clipFrame.width;
+!    displayedSprite.clipFrame.height = sprite.clipFrame.height;
+!  }
+!  else
+!  {
+!    displayedSprite.clip = false;
+!  }
+!
+!  displayedSprite.anchor.x = 0.5;
+!  displayedSprite.anchor.y = 0.5;
+!  displayedSprite.width  = sprite.width;
+!  displayedSprite.height = sprite.height;
+!
+!  displayedSprite.visible = true; // ensure it's visible
+!  
+!  displayedSprite.mask = null;
+!  
+!  displayedSprite.alpha = sprite.alpha;
+!  
+!  // displayedSprite.texture.baseTexture.filter = spider.sprite.filtering;
+!
+!  if (sprite.rotation) // Apply the rotation If any
+!  {
+!    displayedSprite.rotation = sprite.rotation*Math.PI/180;
+!        
+!    displayedSprite.pivot.x = 0;//displayedSprite.width/2;
+!    displayedSprite.pivot.y = 0;//displayedSprite.height/2;
+!    displayedSprite.position.x = v_x ;//+ displayedSprite.width/2;
+!    displayedSprite.position.y = v_y ;//+ displayedSprite.height/2;
+!   }
+!  else
+!  {
+!    displayedSprite.rotation = 0;
+!    displayedSprite.pivot.x = 0;
+!    displayedSprite.pivot.y = 0;
+!    
+!    displayedSprite.position.x = v_x;
+!    displayedSprite.position.y = v_y;
+!  }
+!  
+!  spider.sprite.nbDisplayedSprite++;
+
+EndProcedure 
+
+Structure ball 
+   x.d
+   vx.d
+   y.d 
+   vy.d
+   r.d
+   mass.d
+   type.i
+   bcollide.i
+   sprite.i
+EndStructure 
+
+EnableExplicit
+
+Global left,right,top,bottom,sp,*player.ball,st,time,ang.d   
+Global NewList bodies.ball() 
+Global NewList del() 
+Global Dim sp(12) 
+
+Procedure CircleToCircle(*b.ball,*b1.ball)
+   Protected dist.d,dx.d,dy.d,frac.d,t.d,fd.d,m0.d,m1.d,x0.d,y0.d,x1.d,y1.d,nx.d,ny.d,p.d 
+   dx = *b\x - *b1\x  
+   dy = *b\y - *b1\y 
+   dist = Sqr(dx*dx+dy*dy) 
+   t.d = *b\r + *b1\r    
+   If dist < t 
+      
+      fd.d = (dist-t)/dist  
+      m0.d  = *b\mass         
+      m1.d =  *b1\mass
+      x0.d =   *b\x - *b\vx   
+      x1.d  = *b1\x- *b1\vx 
+      y0.d =   *b\y - *b\vy 
+      y1.d  = *b1\y  - *b1\vy 
+      
+      dx = *b\x - *b1\x         
+      dy = *b\y - *b1\y
+      
+      nx.d = dx / t
+      ny.d = dy /  t 
+      
+      p.d = (2 * (x0 * nx + y0 * ny) - (x1 * nx + y1 * ny)) / (m0 + m1) * (1/(2*#PI))  
+      
+      dx = x0 - (p * m1 * nx)     
+      dy = y0 - (p * m1 * ny)   
+      
+    
+      *b\vx = *b\x -dx 
+      *b\vy = *b\y - dy 
+    
+     
+     dx =  x1 + (p * m0 * nx) 
+     dy =  y1 + (p * m0 * ny)   
+      
+    
+      *b1\vx = *b1\x -dx
+      *b1\vy = *b1\y  -dy
+    
+   
+   ProcedureReturn #True 
+  
+EndIf 
+EndProcedure   
+
+Procedure UpDateBodies() 
+   Protected dx.d,dy.d
+   ForEach bodies() 
+      
+  
+         dx = (bodies()\x - bodies()\vx) 
+         dy = (bodies()\y - bodies()\vy) 
+         bodies()\vx = bodies()\x
+         bodies()\vy = bodies()\y
+         bodies()\x + dx 
+         bodies()\y + dy 
+                        
+         If bodies()\x  - bodies()\r <= left
+            bodies()\vx = left  + bodies()\r
+            bodies()\x = bodies()\vx
+            bodies()\x  -  dx
+          
+         ElseIf bodies()\x + bodies()\r > right
+            bodies()\vx = right - bodies()\r 
+            bodies()\x = bodies()\vx
+            bodies()\x  - dx 
+          
+         EndIf 
+         
+         If bodies()\y  - bodies()\r <= top 
+            bodies()\vy = top + bodies()\r 
+            bodies()\y = bodies()\vy
+            bodies()\y  -  dy 
+         ElseIf bodies()\y + bodies()\r >= bottom 
+            bodies()\vy = bottom  - bodies()\r  
+            bodies()\y  =   bodies()\vy             
+            bodies()\y  - dy 
+         EndIf   
+         
+  
+         
+  Next   
+      
+EndProcedure    
+Procedure Displaymessage(x,y,msg.s)
+  Protected sp,timg,fw,fh
+  ; Static fontnum 
+  ; If Not fontnum 
+  ;   fontnum = LoadFont(#PB_Any,"Arial",14)
+  ; EndIf   
+  ; timg = CreateImage(#PB_Any,1,1)            
+  ; StartDrawing(ImageOutput(timg))
+  ;     DrawingFont(FontID(fontnum))  
+  ;     fw = TextWidth(msg)
+  ;     fh = TextHeight(msg)  
+  ; StopDrawing()  
+   
+   sp = CreateSprite(#PB_Any,300,40) 
+   
+   StartDrawing(SpriteOutput(sp))
+       DrawText(0,0,msg,RGB(0,255,0))
+   StopDrawing()
+   ;TransparentSpriteColor(sp,0)
+   DisplayTransparentSprite(sp,x,y,255,0)
+   FreeSprite(sp)
+   ;FreeImage(timg)      
+EndProcedure
+
+Procedure Reset() 
+  Protected a,r,vx.d,vy.d,s
+  ClearList(bodies())   
+  For a = 1 To 100 
+   AddElement(bodies())
+   If a = 1 
+      r = 18 
+      *player = @bodies() 
+    Else   
+      r= Random(20,3)
+   EndIf    
+   vx.d = (-1 + Random(2)) * 0.5   
+   vy.d = (-1 + Random(2))  * 0.5  
+   bodies()\x = Random(right-r,r) 
+   bodies()\y = Random(bottom-r,r)
+   bodies()\vx = bodies()\x + vx 
+   bodies()\vy = bodies()\y + vy 
+   bodies()\r = r 
+   bodies()\mass = #PI * r * r 
+   s = Random(1,0) 
+   If a = 1 
+      s = 2 
+   EndIf    
+   bodies()\sprite = sp(s) 
+   
+Next    
+st = ElapsedMilliseconds() 
+time=0
+EndProcedure    
+
+Procedure RunWorld()
+    Protected numfps,numfpsShown,timer 
+    Protected EV,a,*BodyPtr.ball,result,ft.d,sum.d
+    ang + 0.01
+       
+       FirstElement(bodies())
+       ExamineKeyboard() 
+       If KeyboardPushed(#PB_Key_Up) 
+           bodies()\y - 0.01 
+           bodies()\mass - 1
+        ElseIf  KeyboardPushed(#PB_Key_Down)    
+           bodies()\y + 0.01 
+           bodies()\mass - 1
+        EndIf 
+        If KeyboardPushed(#PB_Key_Left)
+           bodies()\x - 0.01 
+           bodies()\mass - 1
+        ElseIf KeyboardPushed(#PB_Key_Right)
+           bodies()\x + 0.01 
+           bodies()\mass - 1
+        ElseIf KeyboardPushed(#PB_Key_R)  
+           Reset()
+        EndIf    
+           
+       For a = 1 To 5 
+          UpDateBodies() 
+           *BodyPtr.ball 
+           
+             ForEach bodies()
+               *BodyPtr = @bodies()
+                While NextElement(bodies()) 
+                   result =  CircleToCircle(@bodies(),*BodyPtr) 
+                   If result 
+                    If  bodies()\r >= *BodyPtr\r 
+                       bodies()\mass + 2
+                       *BodyPtr\mass - 2
+                                  
+                      Else 
+                         *BodyPtr\mass+2 
+                         bodies()\mass-2  
+                         
+                         
+                      EndIf    
+                        bodies()\r = Sqr(bodies()\mass / #PI)
+                       *BodyPtr\r = Sqr(*BodyPtr\mass / #PI)    
+                   EndIf 
+               Wend  
+              ChangeCurrentElement(bodies(),*BodyPtr)    
+            Next        
+                   
+      
+       Next
+       
+    
+       ClearScreen(0)
+       ZoomSprite(sp(12),right*2,right*2)
+       ;RotateSprite(sp(12),ang,#PB_Absolute)
+       DisplayTransparentSprite(sp(12),0-right/2,0-right/2)
+            
+       sum = - *player\mass 
+       Protected r,rt.d
+       ForEach bodies() 
+                    
+          r = bodies()\r  
+          If bodies()\mass > 0
+       
+            sum + bodies()\mass 
+             ZoomSprite(bodies()\sprite,bodies()\r*2,bodies()\r*2)
+             ZoomSprite(sp(2),bodies()\r*1.8,bodies()\r*1.8)
+             RotateSprite(sp(2),bodies()\x-bodies()\vx,#PB_Relative)
+             rt = bodies()\r*0.9
+           
+             myDisplayTransparentSprite(sp(2),bodies()\x,bodies()\y,127,0)   
+             myDisplayTransparentSprite(bodies()\sprite,bodies()\x,bodies()\y,127,0)   
+                   
+         Else 
+            If *player = @bodies() 
+                If Not time 
+                  time = (ElapsedMilliseconds() - st) / 1000
+                EndIf  
+               Displaymessage(30,30,"You got absorbed in " + Str(time)  + " seconds") 
+            Else           
+              DeleteElement(bodies())
+            EndIf  
+         EndIf      
+        Next    
+        
+        If *player\mass > sum 
+           If Not time 
+              time = (ElapsedMilliseconds() - st) / 1000
+           EndIf    
+            Displaymessage(30,30,"You became the largest in " + Str(time) + " seconds") 
+         EndIf 
+           
+      FlipBuffers()
+      
+ EndProcedure    
+ 
+ Procedure Start()
+  
+  ClearScreen(0)
+  BindEvent(#PB_Event_RenderFrame, @RunWorld())
+  Reset() 
+  FlipBuffers() ; start rendering
+  
+EndProcedure
+ 
+ Procedure Loading(Type, Filename$)
+  Static NbLoadedElements
+  
+  Debug Filename$ + " loaded"
+  
+  NbLoadedElements+1
+  If NbLoadedElements = 4 ; Finished the loading of all images and sounds, we can start the applications
+   start()
+  EndIf
+EndProcedure
+
+
+Procedure LoadingError(Type, Filename$)
+  Debug Filename$ + ": loading error"
+EndProcedure
+
+; Register the loading event before calling any resource load command
+BindEvent(#PB_Event_Loading, @Loading())
+BindEvent(#PB_Event_LoadingError, @LoadingError())
+
+ExamineDesktops()
+left=0 
+right = DesktopWidth(0)
+top = 0 
+bottom = DesktopHeight(0)
+
+OpenScreen(right,bottom,32,"Osmosis");,#PB_Window_BorderLess)
+
+sp(0) = LoadSprite(-1,"bigblue.png",#PB_Sprite_AlphaBlending)
+
+sp(1) = LoadSprite(-1,"bigblue1.png",#PB_Sprite_AlphaBlending)
+ 
+sp(2) = LoadSprite(-1,"bloom.png",#PB_Sprite_AlphaBlending) 
+ 
+sp(12) = LoadSprite(-1,"osmosis.png")
+ClipSprite(sp(12),0,128,512,384) 
+; IDE Options = SpiderBasic 2.20 (Windows - x86)
+; CursorPosition = 372
+; FirstLine = 346
+; Folding = --
+; WindowTheme = flat
+; GadgetTheme = flat
+; WebAppName = osmosis
+; WebAppIcon = bigblue.png
+; HtmlFilename = index.html
+; JavaScriptFilename = osmosis.js
+; CopyJavaScriptLibrary
+; iOSAppOrientation = 0
+; AndroidAppOrientation = 0
+; EnableAsm
+; EnableXP
+; CompileSourceDirectory
