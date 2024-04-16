@@ -1,3 +1,6 @@
+![PureBasic Version][badge purebasic]&nbsp;&nbsp;
+[![MIT License][badge license]](./LICENSE)&nbsp;&nbsp;
+
 # Atomic_Web_Server_3
  Atomic Web Server 3
  multi threaded application server for purebasic 
@@ -14,6 +17,10 @@ proxy_server_lan_wan.pb     : use multiple domains on same server multiple ports
 www folder contains the test data for the examples 
 note you will have to edit your hosts file to test and change IP address to suit. 
 
+<!-- badges  -->
+
+[badge license]: https://img.shields.io/badge/license-MIT-00b5da "Released under the MIT License"
+[badge purebasic]: https://img.shields.io/badge/PureBasic-6.10-yellow "PureBasic 6.10 (x86/x64) â€” Linux/OS X/Windows (Arm) PI3/Pi4"
 
   
 
