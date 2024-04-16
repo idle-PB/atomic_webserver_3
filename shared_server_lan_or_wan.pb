@@ -104,7 +104,7 @@ EndProcedure
 
 Global event, server1
 
-server1 = Atomic_Server_Init("atomic_webserver","www/",#Server_IP,"",80)  ;init the server on local host  
+server1 = Atomic_Server_Init("atomic_webserver","./www/",#Server_IP,"",80)  ;init the server on local host  
 
 Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to #Server_IP /foo?foo=1234&bar=56789
 Atomic_Server_Add_Handler(server1,"atomicweberver1.com/bar",@URIbar()) ;navigate to http://atomicweberver1.com/bar?foo=1234&bar=56789

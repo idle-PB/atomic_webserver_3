@@ -92,8 +92,8 @@ EndProcedure
 
 Global event, server1,server2
 
-server1 = Atomic_Server_Init("atomic_webserver 1","www/","127.0.0.1","",80,#PB_Network_IPv4,5000,@CBPostGet(),@CBPostGet()) 
-server2 = Atomic_Server_Init("Atomic_webwerver 2","www/","127.0.0.1","",81) 
+server1 = Atomic_Server_Init("atomic_webserver 1","./www/","127.0.0.1","",80,#PB_Network_IPv4,5000,@CBPostGet(),@CBPostGet()) 
+server2 = Atomic_Server_Init("Atomic_webwerver 2","./www/","127.0.0.1","",81) 
 
 Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to http://127.0.0.1/foo?foo=1234&bar=56789
 Atomic_Server_Add_Handler(server2,"bar",@URIbar()) ;navigate to http://127.0.0.1/bar?foo=12345&bar=6789

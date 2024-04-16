@@ -109,7 +109,7 @@ CompilerIf #Proxy
     
   Global event,server1,title.s = "atomic_webserver 1"
   
-  server1 = Atomic_Server_Init(title,"www/",#Server_IP,"atomicweberver1.com",80) ;this is our proxy server navigate to http://atomicweberver1.com  
+  server1 = Atomic_Server_Init(title,"./www/",#Server_IP,"atomicweberver1.com",80) ;this is our proxy server navigate to http://atomicweberver1.com  
   Atomic_Server_Add_Proxy(server1,"atomicwebserver2.com","127.0.0.1",81) ;set server 1 to proxy to port 81    
     
   Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to http://127.0.0.1/foo?foo=1234&bar=56789
