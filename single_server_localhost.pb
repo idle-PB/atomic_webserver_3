@@ -10,8 +10,17 @@ XIncludeFile "Atomic_Web_Server3.pbi"
 Procedure URIfoo(*request.Atomic_Server_Request)
   
   Protected  *Atomic_Server.Atomic_Server = *request\serverid 
-  Protected  content.s 
+  Protected  *client.Atomic_Server_Client = *request\clientID 
+  Protected  content.s,session.s,setsession.s   
   Protected *data
+  
+  If FindMapElement(*client\Cookies(),"sessionID")  
+    session = *client\Cookies()
+  Else   
+    setsession = Str(Random($FFFFFFFF)) + "; " + "Max-Age=" + "60"  
+    Atomic_Server_SetCookie(*request,"sessionID",setsession)
+  EndIf  
+  
   Debug *request\Request 
   
    content.s = "<!DOCTYPE html>" + #CRLF$
@@ -31,7 +40,10 @@ Procedure URIfoo(*request.Atomic_Server_Request)
    ForEach *request\parameters() 
     content + "<p>" + MapKey(*request\parameters()) + "=" + *request\parameters() +"</p>" 
    Next 
-      
+   If session <> ""
+     content + "<p>" + "sessionID =" + session + "</p>"  
+   EndIf 
+   
    content + "<body></html>"
     
   *data = UTF8(content)

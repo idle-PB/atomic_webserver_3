@@ -1,13 +1,14 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.0.8b2
+;Version 3.0.8b3
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST
 ;Get Post handlers
 ;URIhandler with parameters for get or post
 ;Reverse Proxy 
-;deflate compression 
+;Deflate compression 
+;Header fields and Cookies
 
 CompilerIf Not #PB_Compiler_Thread 
   MessageRequester("Atomic Web Server v3","Compile with thread safe!")
@@ -54,6 +55,7 @@ Structure Atomic_Server_Request
   Host.s
   Request.s
   RequestedFile.s
+  Map RequestHeaders.s(64)
   Map parameters.s(64)
 EndStructure   
 
@@ -62,7 +64,10 @@ Structure Atomic_Server_Client
   ServerId.i
   lock.i
   timeout.i
-  List requests.Atomic_Server_Request() 
+  bSetCookie.i
+  Map  Cookies.s(64)
+  Map  ResponseHeaders.s(64) 
+  List Requests.Atomic_Server_Request() 
 EndStructure   
 
 Prototype Atomic_Server_pURIHandler(*request.Atomic_Server_Request)
@@ -256,7 +261,7 @@ Declare Atomic_Server_Init(Title.s,WWWDirectory.s,Ip.s="127.0.0.1",domain.s="",P
 Declare Atomic_Server_Start(Server,window=-1,Blog=0)                                                 
 Declare Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
 Declare Atomic_Server_ProcessRequest(ClientID)                                         
-Declare Atomic_Server_BuildRequestHeader(*Atomic_Server.Atomic_Server,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0)
+Declare Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0)
 Declare Atomic_Server_Resize()
 Declare Atomic_Server_Exit(Server)                                                  
 Declare Atomic_Server_Index(*request.Atomic_Server_Request) 
@@ -700,8 +705,8 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
       *data = Atomic_Server_deflate(*request,*Data,MemorySize(*data)) 
     EndIf   
     FileLength = MemorySize(*data) 
-    *FileBuffer   = AllocateMemory(FileLength + 512)
-    *BufferOffset = Atomic_Server_BuildRequestHeader(server,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress) 
+    *FileBuffer   = AllocateMemory(FileLength + 8192)
+    *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress) 
     CopyMemory(*data,*BufferOffset,FileLength)
     outpos = 0
     fulllen = *BufferOffset - *FileBuffer + FileLength
@@ -714,6 +719,86 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   EndIf        
   
 EndProcedure  
+  
+Procedure Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s)  ;set a client cookie 
+  
+   Protected *client.Atomic_Server_Client = *request\clientID   
+   LockMutex(*client\lock) 
+   If FindMapElement(*client\Cookies(),cookie) 
+     *client\Cookies() = value  
+   Else 
+     AddMapElement(*client\Cookies(),cookie) 
+     *client\Cookies() = value   
+   EndIf   
+   UnlockMutex(*client\lock) 
+   
+EndProcedure   
+
+Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal function retrives cookies 
+  
+  Protected *client.Atomic_Server_Client = *request\clientID   
+  Protected cookie.s,cookies.s,key.s,val.s,ct,a 
+    
+  LockMutex(*client\lock) 
+  If FindMapElement(*request\RequestHeaders(),"Cookie") 
+    cookies.s = *request\RequestHeaders() 
+    ct = CountString(cookies,"; ") +1 
+    For a = 1 To ct 
+      cookie = StringField(cookies,a,"; ") 
+      key = StringField(cookie,1,"=") 
+      val = StringField(cookie,2,"=") 
+      If FindMapElement(*client\Cookies(),key)  
+        *client\Cookies() = Val 
+      Else 
+        AddMapElement(*client\Cookies(),key)
+        *client\Cookies() = Val  
+      EndIf   
+    Next   
+  EndIf   
+  UnlockMutex(*client\lock) 
+   
+EndProcedure   
+
+Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;internal gets request headers 
+  
+  Protected pos,ct,a,line.s,key.s,val.s 
+  Protected *client.Atomic_Server_Client = *request\clientID  
+  
+  ct = CountString(*request\Request,#CRLF$) 
+  For a = 1 To ct 
+    line.s = StringField(*request\request,a,#CRLF$) 
+    pos = FindString(line,": ") 
+    If pos 
+      key.s = StringField(line,1,": ") 
+      val.s = StringField(line,2,": ")  
+      If FindMapElement(*request\RequestHeaders(),key) 
+        *request\RequestHeaders() = val 
+      Else 
+        AddMapElement(*request\RequestHeaders(),key) 
+        *request\RequestHeaders() = val 
+      EndIf 
+      If key = "Cookie" 
+        Atomic_Server_GetCookies(*request) 
+      EndIf 
+        
+    EndIf   
+  Next     
+    
+EndProcedure  
+
+Procedure Atomic_Server_SetResponceHeader(*request.Atomic_Server_Request,key.s,value.s) ;faciltates adding custom header fields 
+  
+  Protected *client.Atomic_Server_Client = *request\clientID   
+   LockMutex(*client\lock) 
+   If FindMapElement(*client\ResponseHeaders(),key) 
+     *client\ResponseHeaders() = value  
+   Else 
+     AddMapElement(*client\ResponseHeaders(),key)  
+     *client\ResponseHeaders() = value   
+   EndIf   
+   UnlockMutex(*client\lock)  
+  
+EndProcedure   
 
 Procedure Atomic_Server_GetParameters(*request.Atomic_Server_Request)
   
@@ -825,6 +910,9 @@ Procedure Atomic_Server_ProcessRequest(*request.Atomic_Server_Request)
   ElseIf FindString(type,"HEAD",1)  
     *request\type = #ATOMIC_SERVER_HEAD
   EndIf 
+  
+  Atomic_Server_GetRequestHeaders(*request)
+  
   If *request\type  
     MaxPosition = FindString(Request, Chr(13), 5)
     Position = FindString(Request, " ", 5)
@@ -922,8 +1010,8 @@ Procedure Atomic_Server_ProcessRequest(*request.Atomic_Server_Request)
           *output = Atomic_Server_deflate(*request,*output,MemorySize(*output))   
         EndIf   
         FileLength = MemorySize(*output)
-        *FileBuffer   = AllocateMemory(FileLength + 512)
-        *BufferOffset = Atomic_Server_BuildRequestHeader(*Atomic_Server,*FileBuffer, FileLength, ContentType,*request\status,*request\bcompress)
+        *FileBuffer   = AllocateMemory(FileLength + 8192)
+        *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, ContentType,*request\status,*request\bcompress)
         CopyMemory(*output,*BufferOffset,FileLength) 
         FreeMemory(*preprocess)
         FreeMemory(*output) 
@@ -935,8 +1023,8 @@ Procedure Atomic_Server_ProcessRequest(*request.Atomic_Server_Request)
             *output = Atomic_Server_deflate(*request,*output,MemorySize(*output)) 
           EndIf   
           FileLength = MemorySize(*output)
-          *FileBuffer  = AllocateMemory(FileLength + 512)
-          *BufferOffset = Atomic_Server_BuildRequestHeader(*Atomic_Server,*FileBuffer, FileLength, ContentType,*request\status,*request\bcompress)
+          *FileBuffer  = AllocateMemory(FileLength + 8192)
+          *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, ContentType,*request\status,*request\bcompress)
           CopyMemory(*output,*BufferOffset, FileLength)
           FreeMemory(*output)
         EndIf 
@@ -952,8 +1040,10 @@ Procedure Atomic_Server_ProcessRequest(*request.Atomic_Server_Request)
   
 EndProcedure
 
-Procedure Atomic_Server_BuildRequestHeader(*Atomic_Server.Atomic_Server,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0)
+Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0)
   
+  Protected *Atomic_Server.Atomic_Server = *request\Serverid
+  Protected *client.Atomic_Server_Client = *request\clientID 
   Protected Length
   Protected date = _DateUTC()
   Protected Week.s = "Sun, Mon,Tue,Wed,Thu,Fri,Sat"
@@ -963,8 +1053,8 @@ Procedure Atomic_Server_BuildRequestHeader(*Atomic_Server.Atomic_Server,*FileBuf
   Protected Month.s = StringField("Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec", Month(Date), ",")
   Protected Year.s = Str(Year(Date))
   Protected Time.s = FormatDate("%hh:%ii:%ss GMT", Date)
-  Protected state.s
-  
+  Protected state.s,line.s 
+    
   Select status 
     Case 100 
       state = "100 Continue"
@@ -984,6 +1074,24 @@ Procedure Atomic_Server_BuildRequestHeader(*Atomic_Server.Atomic_Server,*FileBuf
   *FileBuffer + Length
   Length = PokeS(*FileBuffer, "Server: "+ *Atomic_Server\DomainAlias + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
+  
+  ;LockMutex(*client\lock)
+  ForEach *client\ResponseHeaders() 
+    line = MapKey(*client\ResponseHeaders()) + ": " + *client\ResponseHeaders() +  #CRLF$ 
+    Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)
+    *FileBuffer + Length
+  Next 
+  
+  If *client\bSetCookie = 0 
+    ForEach *client\Cookies() 
+      line = "Set-Cookie: " + MapKey(*client\Cookies()) + "=" + *client\Cookies() +  #CRLF$ 
+      Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)
+      *FileBuffer + Length
+      *client\bSetCookie = 1   
+    Next   
+  EndIf 
+  ;UnlockMutex(*client\lock) 
+  
   Length = PokeS(*FileBuffer, "Content-Length: " + Str(FileLength) + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   Length = PokeS(*FileBuffer, "Content-Type: " + ContentType + #CRLF$, -1, #PB_UTF8)
@@ -994,7 +1102,7 @@ Procedure Atomic_Server_BuildRequestHeader(*Atomic_Server.Atomic_Server,*FileBuf
   EndIf   
   Length = PokeS(*FileBuffer, #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
-  
+     
   ProcedureReturn *FileBuffer
   
 EndProcedure
