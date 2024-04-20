@@ -740,7 +740,7 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
   Protected cookie.s,cookies.s,key.s,val.s,ct,a 
   Static regex 
   If Not regex 
-    regex = CreateRegularExpression(#PB_Any,"[\w-]+=(?:[^\s;,]|%[0-9A-Fa-f]{2})*$") 
+    regex = CreateRegularExpression(#PB_Any,"(?:\s*\w+\s*=\s*[\d\w-_.]+\s*;?)*$") 
   EndIf 
   
   LockMutex(*client\lock) 
