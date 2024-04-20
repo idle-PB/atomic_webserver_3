@@ -738,25 +738,33 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
   
   Protected *client.Atomic_Server_Client = *request\clientID   
   Protected cookie.s,cookies.s,key.s,val.s,ct,a 
-    
+  Static regex 
+  If Not regex 
+    regex = CreateRegularExpression(#PB_Any,"[\w-]+=(?:[^\s;,]|%[0-9A-Fa-f]{2})*$") 
+  EndIf 
+  
   LockMutex(*client\lock) 
   If FindMapElement(*request\RequestHeaders(),"Cookie") 
     cookies.s = *request\RequestHeaders() 
     ct = CountString(cookies,"; ") +1 
     For a = 1 To ct 
       cookie = StringField(cookies,a,"; ") 
-      key = StringField(cookie,1,"=") 
-      val = StringField(cookie,2,"=") 
-      If FindMapElement(*client\Cookies(),key)  
-        *client\Cookies() = Val 
-      Else 
-        AddMapElement(*client\Cookies(),key)
-        *client\Cookies() = Val  
-      EndIf   
+      If ExamineRegularExpression(regex,cookie) 
+        If NextRegularExpressionMatch(regex)
+          key = StringField(cookie,1,"=") 
+          val = StringField(cookie,2,"=") 
+          If FindMapElement(*client\Cookies(),key)  
+            *client\Cookies() = Val 
+          Else 
+            AddMapElement(*client\Cookies(),key)
+            *client\Cookies() = Val  
+          EndIf
+        EndIf 
+      EndIf 
     Next   
   EndIf   
   UnlockMutex(*client\lock) 
-   
+  
 EndProcedure   
 
 Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;internal gets request headers 
