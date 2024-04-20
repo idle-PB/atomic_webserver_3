@@ -65,6 +65,7 @@ Structure Atomic_Server_Client
   lock.i
   timeout.i
   bSetCookie.i
+  regex.i
   Map  Cookies.s(64)
   Map  ResponseHeaders.s(64) 
   List Requests.Atomic_Server_Request() 
@@ -408,6 +409,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             *client\ID = clientID 
             *client\serverid = *Atomic_server 
             *client\lock = CreateMutex()
+            *client\regex = CreateRegularExpression(#PB_Any,"(?:\s*\w+\s*=\s*[\d\w-_.]+\s*;?)*$") 
             *client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout 
             AddMapElement(clients(),Str(ClientId))  
             clients() = *client  
@@ -462,6 +464,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               If (ElapsedMilliseconds() > *client\timeout And ListSize(*client\requests())=0)
                 CloseNetworkConnection(*client\ID) 
                 FreeMutex(*client\lock) 
+                FreeRegularExpression(*client\regex) 
                 FreeStructure(*client) 
                 DeleteMapElement(clients())
               EndIf 
@@ -474,6 +477,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
     ForEach clients()
       *client = clients()
       FreeMutex(*client\lock) 
+      FreeRegularExpression(*client\regex) 
       FreeStructure(clients()) 
     Next   
     FreeMemory(*buffer)       
@@ -723,6 +727,7 @@ EndProcedure
 Procedure Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s)  ;set a client cookie 
   
    Protected *client.Atomic_Server_Client = *request\clientID   
+      
    LockMutex(*client\lock) 
    If FindMapElement(*client\Cookies(),cookie) 
      *client\Cookies() = value  
@@ -738,19 +743,15 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
   
   Protected *client.Atomic_Server_Client = *request\clientID   
   Protected cookie.s,cookies.s,key.s,val.s,ct,a 
-  Static regex 
-  If Not regex 
-    regex = CreateRegularExpression(#PB_Any,"(?:\s*\w+\s*=\s*[\d\w-_.]+\s*;?)*$") 
-  EndIf 
-  
-  LockMutex(*client\lock) 
+    
   If FindMapElement(*request\RequestHeaders(),"Cookie") 
     cookies.s = *request\RequestHeaders() 
     ct = CountString(cookies,"; ") +1 
+    LockMutex(*client\lock) 
     For a = 1 To ct 
       cookie = StringField(cookies,a,"; ") 
-      If ExamineRegularExpression(regex,cookie) 
-        If NextRegularExpressionMatch(regex)
+      If ExamineRegularExpression(*client\regex,cookie) 
+        If NextRegularExpressionMatch(*client\regex)
           key = StringField(cookie,1,"=") 
           val = StringField(cookie,2,"=") 
           If FindMapElement(*client\Cookies(),key)  
@@ -761,10 +762,10 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
           EndIf
         EndIf 
       EndIf 
-    Next   
+    Next  
+    UnlockMutex(*client\lock)   
   EndIf   
-  UnlockMutex(*client\lock) 
-  
+    
 EndProcedure   
 
 Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;internal gets request headers 
@@ -1083,7 +1084,7 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   Length = PokeS(*FileBuffer, "Server: "+ *Atomic_Server\DomainAlias + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   
-  ;LockMutex(*client\lock)
+  
   ForEach *client\ResponseHeaders() 
     line = MapKey(*client\ResponseHeaders()) + ": " + *client\ResponseHeaders() +  #CRLF$ 
     Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)
@@ -1091,15 +1092,16 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   Next 
   
   If *client\bSetCookie = 0 
+    LockMutex(*client\lock)
     ForEach *client\Cookies() 
       line = "Set-Cookie: " + MapKey(*client\Cookies()) + "=" + *client\Cookies() +  #CRLF$ 
       Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)
       *FileBuffer + Length
       *client\bSetCookie = 1   
     Next   
+    UnlockMutex(*client\lock) 
   EndIf 
-  ;UnlockMutex(*client\lock) 
-  
+    
   Length = PokeS(*FileBuffer, "Content-Length: " + Str(FileLength) + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   Length = PokeS(*FileBuffer, "Content-Type: " + ContentType + #CRLF$, -1, #PB_UTF8)
