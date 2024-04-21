@@ -48,6 +48,7 @@ Procedure URIfoo(*request.Atomic_Server_Request)
     
   *data = UTF8(content)
   
+  *request\status = 200              ;set the status    
   *request\ContentType = "text/html" ;Set the contentType
   
   ProcedureReturn *data  
