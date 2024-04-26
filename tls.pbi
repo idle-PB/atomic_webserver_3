@@ -245,6 +245,8 @@ Structure TLS_Globals
 	domain$
 	LastError.i
 	DLL.i
+	muxClient.i
+	muxSever.i
 	Map Clients.TLS_Connections()
 	Map Servers.TLS_Connections()
 EndStructure
@@ -252,7 +254,11 @@ EndStructure
 Global TLSG.TLS_Globals
 
 Procedure __MyInit()
-	CompilerIf Defined(LIBTLSFILE$, #PB_Variable)
+  
+  TLSG\muxClient = CreateMutex()
+  TLSG\muxSever = CreateMutex() 
+  
+  CompilerIf Defined(LIBTLSFILE$, #PB_Variable)
 		TLSG\DLL = OpenLibrary(#PB_Any, LIBTLSFILE$)
 	CompilerElse
 		CompilerSelect #PB_Compiler_OS
@@ -433,8 +439,10 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
 					If tls_connect_socket(*ctx, ServerID(ServerID),TLSG\domain$) = -1
 						TLSG\LastError = #TLS_Error_Cant_Connect_Socket
 					Else
-						AddMapElement(TLSG\Servers(), Str(ServerID(ServerID)))
-						TLSG\Servers()\ctx = *ctx
+					  LockMutex(TLSG\muxSever) 
+					  AddMapElement(TLSG\Servers(), Str(ServerID(ServerID)))
+					  TLSG\Servers()\ctx = *ctx
+					  UnlockMutex(TLSG\muxSever) 
 					EndIf
 				EndIf
 			EndIf
@@ -447,48 +455,67 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
 EndProcedure
 
 Procedure TLS_NetworkServerEvent(ServerID)
-	Protected Result, Server, ClientID, ctx
+	Protected Result, Server, ClientID, ctx,*server.TLS_Connections
 	
 	Result = NetworkServerEvent(ServerID)
 	Select Result
 		Case #PB_NetworkEvent_Connect
 			Server = EventServer()
 			Server = ServerID(Server)
-			If FindMapElement(TLSG\Servers(), Str(Server))
-				;TLS!
+			LockMutex(TLSG\muxSever)
+			*server = FindMapElement(TLSG\Servers(), Str(Server))
+			UnlockMutex(TLSG\muxSever)
+			If *server 
+			;TLS!
 				ClientID = EventClient()
-				If tls_accept_socket(TLSG\Servers()\ctx, @ctx, ConnectionID(ClientID)) = -1
+				If tls_accept_socket(*server\ctx, @ctx, ConnectionID(ClientID)) = -1
 					CloseNetworkConnection(ClientID)
 					Result = #PB_NetworkEvent_None
 				Else
-					TLSG\Clients(Str(ClientID))\ctx = ctx
-					tls_handshake(ctx)
+				  LockMutex(TLSG\muxClient) 
+				  AddMapElement(TLSG\Clients(),Str(ClientID))
+				  TLSG\Clients()\ctx = ctx
+				  UnlockMutex(TLSG\muxClient) 
+				  tls_handshake(ctx)
 				EndIf
 			EndIf
 		Case #PB_NetworkEvent_Disconnect
 			Server = EventServer()
 			Server = ServerID(Server)
-			If FindMapElement(TLSG\Servers(), Str(Server))
+			LockMutex(TLSG\muxSever)
+			*server = FindMapElement(TLSG\Servers(), Str(Server))
+			
+			If *server 
 				;TLS!
 				ClientID = EventClient()
+				LockMutex(TLSG\muxClient) 
 				If FindMapElement(TLSG\Clients(), Str(ClientID))
 					tls_close(TLSG\Clients()\ctx)
 					tls_free(TLSG\Clients()\ctx)
 					DeleteMapElement(TLSG\Clients())
 				EndIf
+				UnlockMutex(TLSG\muxClient) 
 			EndIf
+			
+			UnlockMutex(TLSG\muxSever)
+			
 	EndSelect
 	
 	ProcedureReturn Result
 EndProcedure
 
 Procedure TLS_CloseNetworkServer(Server)
-	If FindMapElement(TLSG\Clients(), Str(Server))
+  Protected *client.TLS_Connections 
+  Protected key.s = Str(Server)
+  LockMutex(TLSG\muxClient) 
+  *client = FindMapElement(TLSG\Clients(),key) 
+  UnlockMutex(TLSG\muxClient) 
+  If *client 
     ;is TLS connection!
 		CloseNetworkServer(Server)
-		tls_close(TLSG\Clients()\ctx)
-		tls_free(TLSG\Clients()\ctx)
-		DeleteMapElement(TLSG\Clients())
+		tls_close(*Client\ctx)
+		tls_free(*client\ctx)
+		DeleteMapElement(TLSG\clients(),key)
 	Else
 		CloseNetworkServer(Server)
 	EndIf
@@ -545,8 +572,10 @@ Procedure TLS_OpenNetworkConnection(ServerName$, Port, Mode, TimeOut, LocaleIP$,
 				ClientID = OpenNetworkConnection(ServerName$, Port, Mode, TimeOut, LocaleIP$, LocalePort)
 				If ClientID
 					tls_connect_socket(*ctx, ConnectionID(ClientID), ServerName$)
+					LockMutex(TLSG\muxClient) 
 					AddMapElement(TLSG\Clients(), Str(ClientID))
-					TLSG\Clients()\ctx = *ctx
+					TLSG\Clients()\ctx = *ctx 
+					UnlockMutex(TLSG\muxClient) 
 				EndIf
 			EndIf
 		EndIf
@@ -558,59 +587,74 @@ Procedure TLS_OpenNetworkConnection(ServerName$, Port, Mode, TimeOut, LocaleIP$,
 EndProcedure
 
 Procedure TLS_ReceiveNetworkData(ClientID, Buffer, Length)
-	Protected Result
+	Protected Result,*client.TLS_Connections 
 	
-	If FindMapElement(TLSG\Clients(), Str(ClientID))
-		Result = tls_read(TLSG\Clients()\ctx, Buffer, Length)
+	LockMutex(TLSG\muxClient) 
+	*client = FindMapElement(TLSG\Clients(), Str(ClientID))
+	UnlockMutex(TLSG\muxClient)   
+	
+	If *client 
+	   Result = tls_read(*client\ctx, Buffer, Length)
 	Else
-		Result = ReceiveNetworkData(ClientID, Buffer, Length)
+	  Result = ReceiveNetworkData(ClientID, Buffer, Length)
 	EndIf
 	
 	ProcedureReturn Result
 EndProcedure
 
 Procedure TLS_SendNetworkData(ClientID, Buffer, Length)
-	Protected Result
+	Protected Result,*client.TLS_Connections
 	
-	If FindMapElement(TLSG\Clients(), Str(ClientID))
-		Result = tls_write(TLSG\Clients()\ctx, Buffer, Length)
+	LockMutex(TLSG\muxClient) 
+	*client = FindMapElement(TLSG\Clients(), Str(ClientID))
+	UnlockMutex(TLSG\muxClient)
+	If *client   
+	  Result = tls_write(*client\ctx, Buffer, Length)
 	Else
-		Result = SendNetworkData(ClientID, Buffer, Length)
+	  Result = SendNetworkData(ClientID, Buffer, Length)
 	EndIf
 	
 	ProcedureReturn Result
 EndProcedure
 
 Procedure TLS_SendNetworkString(ClientID, String$, Format)
-	Protected Result, *Buffer
+	Protected Result, *Buffer,*client.TLS_Connections
 	
-	If FindMapElement(TLSG\Clients(), Str(ClientID))
-		Select Format
+	LockMutex(TLSG\muxClient) 
+	*client = FindMapElement(TLSG\Clients(), Str(ClientID))
+	UnlockMutex(TLSG\muxClient)
+	If *client 
+	Select Format
 			Case #PB_Ascii
 				*Buffer = Ascii(String$)
-				Result  = tls_write(TLSG\Clients()\ctx, *Buffer, MemorySize(*Buffer) - 1)
+				Result  = tls_write(*client\ctx, *Buffer, MemorySize(*Buffer) - 1)
 				FreeMemory(*Buffer)
 			Case #PB_Unicode
-				Result = tls_write(TLSG\Clients()\ctx, @String$, StringByteLength(String$))
+				Result = tls_write(*client\ctx, @String$, StringByteLength(String$))
 			Case #PB_UTF8
 				*Buffer = UTF8(String$)
-				Result  = tls_write(TLSG\Clients()\ctx, *Buffer, MemorySize(*Buffer) - 1)
+				Result  = tls_write(*client\ctx, *Buffer, MemorySize(*Buffer) - 1)
 				FreeMemory(*Buffer)
 		EndSelect
 	Else
-		Result = SendNetworkString(ClientID, String$, Format)
+	  Result = SendNetworkString(ClientID, String$, Format)
 	EndIf
 	
 	ProcedureReturn Result
 EndProcedure
 
 Procedure TLS_CloseNetworkConnection(ClientID)
-	If FindMapElement(TLSG\Clients(), Str(ClientID))
+  Protected *client.TLS_Connections,key.s 
+  key =  Str(ClientID)
+  LockMutex(TLSG\muxClient) 
+  *client = FindMapElement(TLSG\Clients(), key)
+  UnlockMutex(TLSG\muxClient) 
+  If *client   
     ;is TLS connection!
 		CloseNetworkConnection(ClientID)
-		tls_close(TLSG\Clients()\ctx)
-		tls_free(TLSG\Clients()\ctx)
-		DeleteMapElement(TLSG\Clients())
+		tls_close(*client\ctx)
+		tls_free(*client\ctx)
+		DeleteMapElement(TLSG\Clients(),key)
 	Else
 		CloseNetworkConnection(ClientID)
 	EndIf
@@ -633,7 +677,7 @@ Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")
 	
 	ProcedureReturn Result
 EndProcedure
-
+  
 Macro OpenNetworkConnection(ServerName, Port, Mode = #PB_Network_TCP | #PB_Network_IPv4, TimeOut = 0, LocaleIP = "", LocalePort = 0)
 	TLS_OpenNetworkConnection(ServerName, Port, Mode, TimeOut, LocaleIP, LocalePort)
 EndMacro
