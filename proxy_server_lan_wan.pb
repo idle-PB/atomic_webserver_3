@@ -2,16 +2,21 @@
 ;the other servers can be in the same instance or seperate programs for localy or remote locations   
 ;Use Atomic_Server_Add_Proxy(server,domain.s,IP.s,port.i) to add a proxy to the other domains and port  
 
-;the www folder has two additional websites under atomicwebserver1.com and atomicwebserver2.com 
+;-HOW TO TEST  
+;##############################################################################
+;The www folder has two websites under atomicwebserver1.com and atomicwebserver2.com 
 ;this requires you edit your hosts file so you can associate the domains to IP number 
-;run notepad as admin and edit host file with you respective 
+;run notepad as admin and edit host file with your respective IP numbers 
 ;C:\Windows\System32\drivers\etc\hosts 
 ;192.168.1.54     atomicwebserver1.com
 ;192.168.1.54     atomicwebserver2.com
 
-;default website is directly under the www folder  
-;shows how to use uriHandlers and pre processor tags 
+;Next compile twice   
+;Set #proxy=0 and Compile Without Debugger
+;Set #proxy=1 And compile With Debugger
+;When you vist atomicwebserver2.com it will proxy it via atomicwebserer1.com  
 
+#proxy = 0
 #Server_IP = "192.168.1.54"  
 
 XIncludeFile "Atomic_Web_Server3.pbi"
@@ -101,10 +106,6 @@ Runtime Procedure ElementsFillCode(*request.Atomic_Server_Request)
      
 EndProcedure   
 
-
-;compile without deubgger then set #proxy=1 and recompile so you have two exes  
-#proxy = 1
-
 CompilerIf #Proxy 
     
   Global event,server1,title.s = "atomic_webserver 1"
@@ -140,7 +141,7 @@ CompilerElse
   
   Global event,server2,title.s = "atomic_webserver 2"
   
-  server2 = Atomic_Server_Init(title,"www/","127.0.0.1","atomicwebserver2.com",81) ;this is our proxy server navigate to http://atomicweberver1.com  
+  server2 = Atomic_Server_Init(title,"./www/","127.0.0.1","atomicwebserver2.com",81) ;this is our proxy server navigate to http://atomicweberver1.com  
   
   Atomic_Server_Add_Handler(server2,"atomicweberver2.com/bar",@URIbar()) ;navigate to http://atomicweberver2.com/bar?foo=12345&bar=56789
   

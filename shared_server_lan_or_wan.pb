@@ -4,6 +4,8 @@
 ;so http://192.168.1.54/atomicwebserver2.com won't work 
 ;but http://atomicwebserver2.com will work  
 
+;-HOW TO TEST  
+;##############################################################################
 ;this requires you edit your hosts file so you can associate the domains to IP number 
 ;run notepad as admin and edit host file with you respective 
 ;C:\Windows\System32\drivers\etc\hosts 
@@ -91,20 +93,25 @@ EndProcedure
 
 Runtime Procedure ElementsFillCode(*request.Atomic_Server_Request) 
   Protected  *Atomic_Server.Atomic_Server = *request\serverid 
-  Protected fn,*buffer 
-  fn = OpenFile(#PB_Any,*Atomic_Server\WWWDirectory + "bm_search.pb") 
+  Protected fn,*buffer,file$ 
+  
+  If FindString(*request\host,"..") = 0  
+  
+  fn = OpenFile(#PB_Any,*Atomic_Server\WWWDirectory + *request\host + "/bm_search.pb") 
   If fn 
     *buffer = AllocateMemory(Lof(fn)) 
      ReadData(fn,*buffer,Lof(fn)) 
      CloseFile(fn) 
      ProcedureReturn *buffer 
-  EndIf    
+   EndIf    
+   
+  EndIf  
      
 EndProcedure   
 
 Global event, server1
 
-server1 = Atomic_Server_Init("atomic_webserver","./www/",#Server_IP,"",80)  ;init the server on local host  
+server1 = Atomic_Server_Init("atomic_webserver","./www/",#Server_IP,"atomicwebserver1.com",80)  ;init the server on local host  
 
 Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to #Server_IP /foo?foo=1234&bar=56789
 Atomic_Server_Add_Handler(server1,"atomicweberver1.com/bar",@URIbar()) ;navigate to http://atomicweberver1.com/bar?foo=1234&bar=56789

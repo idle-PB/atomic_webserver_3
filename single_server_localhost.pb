@@ -48,26 +48,74 @@ Procedure URIfoo(*request.Atomic_Server_Request)
     
   *data = UTF8(content)
   
-  *request\status = 200              ;set the status    
   *request\ContentType = "text/html" ;Set the contentType
   
   ProcedureReturn *data  
   
-EndProcedure 
+EndProcedure
 
 Procedure URIBar(*request.Atomic_Server_Request)
    
-   ProcedureReturn URIfoo(*request)  
+  
+  Protected  *Atomic_Server.Atomic_Server = *request\serverid 
+  Protected  *client.Atomic_Server_Client = *request\clientID 
+  Protected  content.s,session.s,setsession.s   
+  Protected *data
+  
+  If FindMapElement(*client\Cookies(),"sessionID")  
+    setsession = "deleted; Max-Age=-1"  
+    Atomic_Server_SetCookie(*request,"sessionID",setsession)
+    session = *client\Cookies()
+  EndIf  
+  
+  Debug *request\Request 
+  
+   content.s = "<!DOCTYPE html>" + #CRLF$
+   content + "<html><head>" + #CRLF$
+   content + "<link rel='stylesheet' href='https://fonts.googleapis.com/css?family=Noto Sans&effect=fire'>" + #CRLF$
+   content + "<link rel='stylesheet' href='https://fonts.googleapis.com/css?family=Noto Color Emoji'>" + #CRLF$
+   content + "<meta charset='utf-8' />" + #CRLF$
+   content + "<title>" + *Atomic_Server\Title + "</title>" + #CRLF$
+   content + "<style> body { background-color: #6600ff; margin: 10%;} h1 { font-family: 'Noto Sans', sans-serif; color: white;  text-align: center; } " + #CRLF$
+   content + "p { font-family: 'Noto Sans', sans-serif; font-size: 18px;  text-align: center; color: white;} " + #CRLF$ 
+   content + "h2 { font-family: 'Noto Color Emoji'; text-align: center; } " + #CRLF$ 
+   content + "label { font-family: 'Noto Sans', sans-serif; font-size: 30px;  text-align: left; color: white;} " + #CRLF$ 
+   content +  "input[type=text], Select { width: 100%; padding: 12px 20px; margin: 8px 0; display: inline-block; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; } " + #CRLF$  
+   content +  "input[type=submit] { width: 100%; background-color: #0099cc; color: white; padding: 14px 20px; margin: 8px 0; border: none; border-radius: 4px; cursor: pointer; } </style>"  + #CRLF$
+   content + "</head><body><h1 class='font-effect-fire' style='text-align:center';>" + *Atomic_Server\Title + "</h1>"+ #CRLF$
+   content + "<h2 style='text-align:center';>" + Atomic_Server_Chr($2622) + "</h2>"
+   ForEach *request\parameters() 
+    content + "<p>" + MapKey(*request\parameters()) + "=" + *request\parameters() +"</p>" 
+   Next 
+   If session <> ""
+     content + "<p>" + "sessionID =" + session + "</p>"  
+   EndIf 
+   
+   content + "<body></html>"
+    
+  *data = UTF8(content)
+  
+  *request\status = 200 
+  *request\ContentType = "text/html" ;Set the contentType
+  
+  ProcedureReturn *data  
   
 EndProcedure  
 
 Procedure CBPostGet(*request.Atomic_Server_Request) 
   
   Debug *request\Type 
-  
+  Debug "params:" 
+    
   ForEach *request\parameters()
     Debug MapKey(*request\parameters()) + " = " + *request\parameters()
   Next 
+  
+  Debug "headers:" 
+  ForEach *request\RequestHeaders() 
+    Debug MapKey(*request\RequestHeaders()) + " = " + *request\RequestHeaders()
+  Next   
+  
   
 EndProcedure   
 
@@ -109,7 +157,8 @@ server1 = Atomic_Server_Init("atomic_webserver 1","./www/","127.0.0.1","",80,#PB
 server2 = Atomic_Server_Init("Atomic_webwerver 2","./www/","127.0.0.1","",81) 
 
 Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to http://127.0.0.1/foo?foo=1234&bar=56789
-Atomic_Server_Add_Handler(server2,"bar",@URIbar()) ;navigate to http://127.0.0.1/bar?foo=12345&bar=6789
+Atomic_Server_Add_Handler(server1,"bar",@URIbar()) ;navigate to http://127.0.0.1/bar?foo=12345&bar=6789
+
 
 If OpenWindow(1, 0, 0, 800, 600, "my log window", #PB_Window_SystemMenu | #PB_Window_SizeGadget)
   
@@ -117,6 +166,7 @@ If OpenWindow(1, 0, 0, 800, 600, "my log window", #PB_Window_SystemMenu | #PB_Wi
   AddGadgetItem(0,-1, "Server Running on port 80")
   Atomic_Server_start(server1,1,1) ;navigate to http://127.0.0.1 
   Atomic_Server_start(server2,1,1) ;navigate to http://127.0.0.1:81   
+    
   Repeat 
     event = WaitWindowEvent()
     Select event 
@@ -127,7 +177,7 @@ If OpenWindow(1, 0, 0, 800, 600, "my log window", #PB_Window_SystemMenu | #PB_Wi
         Break 
      EndSelect   
   ForEver  
-  
+     
   Atomic_Server_Exit(server1)
   Atomic_Server_Exit(server2)
 

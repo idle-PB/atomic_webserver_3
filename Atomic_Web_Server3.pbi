@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.0.8b3
+;Version 3.0.9b1
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST
@@ -9,11 +9,17 @@ EnableExplicit
 ;Reverse Proxy 
 ;Deflate compression 
 ;Header fields and Cookies
+;TLS libreSSL
 
 CompilerIf Not #PB_Compiler_Thread 
   MessageRequester("Atomic Web Server v3","Compile with thread safe!")
   End 
 CompilerEndIf  
+
+#USETLS = 1 
+CompilerIf #USETLS 
+   XIncludeFile "tls.pbi" 
+CompilerEndIf   
 
 UsePNGImageDecoder()
 UsePNGImageEncoder() 
@@ -103,6 +109,9 @@ Structure Atomic_Server
   IpVer.i
   Port.i
   timeout.i
+  CertFile.s
+  KeyFile.s
+  CaCertFile.s 
   WWWDirectory.s
   WWWIndex.s
   WWWError.s
@@ -371,20 +380,21 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_server\timeout = 10000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
-    If domain = ""
-      *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
-      *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
-      *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon() 
-    Else 
-      *Atomic_Server\URIHandlers(domain + "/index")\pt = @*Atomic_Server_Index() 
-      *Atomic_Server\URIHandlers(domain + "/error")\pt = @*Atomic_Server_Error() 
-      *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @*Atomic_Server_favicon() 
-    EndIf 
+    *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
+    *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
+    *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon() 
     Atomic_Server_Init_MimeTypess(*atomic_server) 
     ProcedureReturn *atomic_server 
   EndIf 
   
-EndProcedure   
+EndProcedure
+
+Procedure Atomic_Server_Init_TLS(server,path.s,CertFile.s,KeyFile.s,CaCertFile.s)
+  Protected *atomic_server.Atomic_Server = server 
+  *atomic_server\CaCertFile = path + CaCertFile  
+  *atomic_server\KeyFile = path + KeyFile 
+  *atomic_server\CertFile = path + CertFile 
+EndProcedure  
 
 Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
   
@@ -392,8 +402,16 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
   Protected  *buffer = AllocateMemory(*Atomic_Server\BufferSize+2) 
   Protected  *client.Atomic_Server_Client 
   Protected  NewMap clients(*Atomic_server\maxclients)
-  Protected  atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
+  Protected  atomicserver 
   Protected  *request.Atomic_Server_Request  
+  
+  If *Atomic_server\Port <> 443 
+    atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
+  Else   
+    Init_TLS(*Atomic_server\DomainAlias,*Atomic_Server\CertFile,*Atomic_Server\KeyFile,*Atomic_Server\CaCertFile)
+    atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_Network_TLS_DEFAULT,*Atomic_server\IP)
+  EndIf 
+  
   If atomicserver
     CompilerIf #PB_Compiler_OS = #PB_OS_Windows  
       TCPNoDelay(ServerID(atomicserver),1) 
@@ -426,7 +444,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             Repeat
               FillMemory(*buffer,*Atomic_Server\BufferSize+2,0,#PB_Byte)
               Result = ReceiveNetworkData(ClientID, *Buffer, *Atomic_Server\BufferSize)
-              If result <> -1 
+              If result > 0 
                 *Client\requests()\Request + PeekS(*Buffer, Result, #PB_UTF8 | #PB_ByteLength)
                 *client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout
               Else 
@@ -747,7 +765,7 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
   If FindMapElement(*request\RequestHeaders(),"Cookie") 
     cookies.s = *request\RequestHeaders() 
     ct = CountString(cookies,"; ") +1 
-    LockMutex(*client\lock) 
+    ;LockMutex(*client\lock) 
     For a = 1 To ct 
       cookie = StringField(cookies,a,"; ") 
       If ExamineRegularExpression(*client\regex,cookie) 
@@ -763,7 +781,7 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
         EndIf 
       EndIf 
     Next  
-    UnlockMutex(*client\lock)   
+    ;UnlockMutex(*client\lock)   
   EndIf   
     
 EndProcedure   
@@ -777,20 +795,25 @@ Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;inter
   For a = 1 To ct 
     line.s = StringField(*request\request,a,#CRLF$) 
     pos = FindString(line,": ") 
+    LockMutex(*client\lock) 
     If pos 
-      key.s = StringField(line,1,": ") 
-      val.s = StringField(line,2,": ")  
-      If FindMapElement(*request\RequestHeaders(),key) 
-        *request\RequestHeaders() = val 
-      Else 
-        AddMapElement(*request\RequestHeaders(),key) 
-        *request\RequestHeaders() = val 
-      EndIf 
-      If key = "Cookie" 
-        Atomic_Server_GetCookies(*request) 
-      EndIf 
-        
-    EndIf   
+      If ExamineRegularExpression(*client\regex,line) 
+        If NextRegularExpressionMatch(*client\regex)
+            key.s = StringField(line,1,": ") 
+            val.s = StringField(line,2,": ")  
+            If FindMapElement(*request\RequestHeaders(),key) 
+              *request\RequestHeaders() = val 
+            Else 
+              AddMapElement(*request\RequestHeaders(),key) 
+              *request\RequestHeaders() = val 
+            EndIf 
+            If key = "Cookie" 
+              Atomic_Server_GetCookies(*request) 
+            EndIf 
+          EndIf 
+       EndIf    
+     EndIf 
+     UnlockMutex(*client\lock) 
   Next     
     
 EndProcedure  
