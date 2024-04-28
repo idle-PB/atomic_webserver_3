@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.0.9b1
+;Version 3.0.9b2
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST
@@ -10,6 +10,9 @@ EnableExplicit
 ;Deflate compression 
 ;Header fields and Cookies
 ;TLS libreSSL
+
+;notes on linux to run a server without super user   
+;sudo setcap CAP_NET_BIND_SERVICE=+eip /path/to/binary
 
 CompilerIf Not #PB_Compiler_Thread 
   MessageRequester("Atomic Web Server v3","Compile with thread safe!")
@@ -116,6 +119,7 @@ Structure Atomic_Server
   WWWIndex.s
   WWWError.s
   maxclients.i
+  ClientCount.i
   BufferSize.i
   DomainAlias.s
   Map proxy.Atomic_server_proxy(128)
@@ -267,7 +271,7 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
 EndProcedure 
 
 ;-Declares 
-Declare Atomic_Server_Init(Title.s,WWWDirectory.s,Ip.s="127.0.0.1",domain.s="",Port=80,IpVer=#PB_Network_IPv4,maxClients=5000,*pCBPost=0,*pCBGet=0) 
+Declare Atomic_Server_Init(Title.s,WWWDirectory.s,Ip.s="127.0.0.1",domain.s="",Port=80,IpVer=#PB_Network_IPv4,maxClients=1000,*pCBPost=0,*pCBGet=0) 
 Declare Atomic_Server_Start(Server,window=-1,Blog=0)                                                 
 Declare Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
 Declare Atomic_Server_ProcessRequest(ClientID)                                         
@@ -362,7 +366,7 @@ CompilerIf #Loadtest <> 0
   
 CompilerEndIf   
 
-Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=5000,*pCBPost=0,*pCBGet=0) 
+Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=1000,*pCBPost=0,*pCBGet=0) 
   
   Protected *atomic_server.Atomic_Server 
   *atomic_server= AllocateStructure(Atomic_Server) 
@@ -380,9 +384,15 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_server\timeout = 10000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
-    *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
     *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
-    *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon() 
+    If domain = "" 
+      *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
+      *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon() 
+    Else 
+      *Atomic_Server\URIHandlers(domain + "/index")\pt = @*Atomic_Server_Index() 
+      *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @*Atomic_Server_favicon() 
+    EndIf 
+       
     Atomic_Server_Init_MimeTypess(*atomic_server) 
     ProcedureReturn *atomic_server 
   EndIf 
@@ -398,7 +408,7 @@ EndProcedure
 
 Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
   
-  Protected  ServerEvent, Result, ClientID
+  Protected  ServerEvent, Result, ClientID, MaxRequest 
   Protected  *buffer = AllocateMemory(*Atomic_Server\BufferSize+2) 
   Protected  *client.Atomic_Server_Client 
   Protected  NewMap clients(*Atomic_server\maxclients)
@@ -422,6 +432,10 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
       Select ServerEvent              
         Case #PB_NetworkEvent_Connect 
           ClientID = EventClient()
+          If *Atomic_server\ClientCount > *Atomic_server\maxclients 
+            CloseNetworkConnection(clientid) 
+          Else   
+            
           *client = AllocateStructure(Atomic_Server_client)
           If *client <> 0 
             *client\ID = clientID 
@@ -431,8 +445,14 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             *client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout 
             AddMapElement(clients(),Str(ClientId))  
             clients() = *client  
-          EndIf   
+            *Atomic_server\ClientCount+1 
+          Else 
+            CloseNetworkConnection(clientid) 
+          EndIf 
+          
+          EndIf 
         Case #PB_NetworkEvent_Data 
+          MaxRequest = 0 
           ClientID = EventClient()         
           If FindMapElement(clients(),Str(clientid)) 
             *client = clients()  
@@ -444,15 +464,18 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             Repeat
               FillMemory(*buffer,*Atomic_Server\BufferSize+2,0,#PB_Byte)
               Result = ReceiveNetworkData(ClientID, *Buffer, *Atomic_Server\BufferSize)
-              If result > 0 
+              If (result > 0 And MaxRequest < *Atomic_server\BufferSize)  
                 *Client\requests()\Request + PeekS(*Buffer, Result, #PB_UTF8 | #PB_ByteLength)
                 *client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout
+                MaxRequest + result   
               Else 
                 Delay(0) 
               EndIf   
             Until Result <> *Atomic_Server\BufferSize
-            If result > 0 
+            If (result > 0 And MaxRequest < *Atomic_server\BufferSize) 
               *client\requests()\tid = CreateThread(@Atomic_Server_ProcessRequest(),@*client\requests())
+            Else   
+              DeleteElement(*client\requests())
             EndIf
           EndIf   
         Case #PB_NetworkEvent_Disconnect 
@@ -464,8 +487,11 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                 *client\requests()\kill = 1 
                 WaitThread(*client\requests()\tid) 
               EndIf   
+              ClearMap(*client\Requests()\RequestHeaders())
+              ClearMap(*client\Requests()\parameters())  
               DeleteElement(*client\requests())
             Next   
+            *Atomic_Server\ClientCount - 1 
             FreeMutex(*client\lock) 
             FreeStructure(clients()) 
             DeleteMapElement(clients()) 
@@ -476,6 +502,8 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             If *client
               ForEach *client\requests()              
                 If *client\requests()\done 
+                  ClearMap(*client\Requests()\RequestHeaders())
+                  ClearMap(*client\Requests()\parameters())  
                   DeleteElement(*client\requests()) 
                 EndIf   
               Next                  
@@ -484,6 +512,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                 FreeMutex(*client\lock) 
                 FreeRegularExpression(*client\regex) 
                 FreeStructure(*client) 
+                *Atomic_server\ClientCount - 1
                 DeleteMapElement(clients())
               EndIf 
             EndIf 
@@ -765,7 +794,7 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
   If FindMapElement(*request\RequestHeaders(),"Cookie") 
     cookies.s = *request\RequestHeaders() 
     ct = CountString(cookies,"; ") +1 
-    ;LockMutex(*client\lock) 
+    
     For a = 1 To ct 
       cookie = StringField(cookies,a,"; ") 
       If ExamineRegularExpression(*client\regex,cookie) 
@@ -781,7 +810,7 @@ Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal fun
         EndIf 
       EndIf 
     Next  
-    ;UnlockMutex(*client\lock)   
+      
   EndIf   
     
 EndProcedure   
@@ -1068,6 +1097,7 @@ Procedure Atomic_Server_ProcessRequest(*request.Atomic_Server_Request)
       FreeMemory(*FileBuffer)
     EndIf 
   EndIf
+     
   *request\done = 1
   
 EndProcedure
@@ -1102,12 +1132,20 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   *FileBuffer + Length
   Length = PokeS(*FileBuffer, "Last-Modified: " + DayOfWeek + ", " + Day + " " + Month + " " + Year + " " + Time  + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
+  
+  date+3600 
+  DayOfWeek.s = StringField("Sun, Mon,Tue,Wed,Thu,Fri,Sat", DayOfWeek(Date) + 1, ",")
+  Day = Day(Date)
+  Month.s = StringField("Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec", Month(Date), ",")
+  Year.s = Str(Year(Date))
+  Time.s = FormatDate("%hh:%ii:%ss GMT", Date)
+  Length = PokeS(*FileBuffer, "Expires: " + DayOfWeek + ", " + Day + " " + Month + " " + Year + " " + Time  + #CRLF$, -1, #PB_UTF8)
+  *FileBuffer + Length
   Length = PokeS(*FileBuffer, "Cache-Control: max-age="+ Str(3600) + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   Length = PokeS(*FileBuffer, "Server: "+ *Atomic_Server\DomainAlias + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
-  
-  
+    
   ForEach *client\ResponseHeaders() 
     line = MapKey(*client\ResponseHeaders()) + ": " + *client\ResponseHeaders() +  #CRLF$ 
     Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)

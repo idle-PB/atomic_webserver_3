@@ -270,7 +270,7 @@ Procedure __MyInit()
 			  CompilerEndIf  
 			    ;error? get it from https://www.purebasic.fr/english/viewtopic.php?p=593079#p593079
 			CompilerDefault
-				TLSG\DLL = OpenLibrary(#PB_Any, "libtls.so.25.0.0")
+				TLSG\DLL = OpenLibrary(#PB_Any, "./libtls.so.25.0.0")
 				;error? get it from https://www.purebasic.fr/english/viewtopic.php?p=593079#p593079
 		CompilerEndSelect
 	CompilerEndIf
@@ -455,53 +455,54 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
 EndProcedure
 
 Procedure TLS_NetworkServerEvent(ServerID)
-	Protected Result, Server, ClientID, ctx,*server.TLS_Connections
-	
-	Result = NetworkServerEvent(ServerID)
-	Select Result
-		Case #PB_NetworkEvent_Connect
-			Server = EventServer()
-			Server = ServerID(Server)
-			LockMutex(TLSG\muxSever)
-			*server = FindMapElement(TLSG\Servers(), Str(Server))
-			UnlockMutex(TLSG\muxSever)
-			If *server 
-			;TLS!
-				ClientID = EventClient()
-				If tls_accept_socket(*server\ctx, @ctx, ConnectionID(ClientID)) = -1
-					CloseNetworkConnection(ClientID)
-					Result = #PB_NetworkEvent_None
-				Else
-				  LockMutex(TLSG\muxClient) 
-				  AddMapElement(TLSG\Clients(),Str(ClientID))
-				  TLSG\Clients()\ctx = ctx
-				  UnlockMutex(TLSG\muxClient) 
-				  tls_handshake(ctx)
-				EndIf
-			EndIf
-		Case #PB_NetworkEvent_Disconnect
-			Server = EventServer()
-			Server = ServerID(Server)
-			LockMutex(TLSG\muxSever)
-			*server = FindMapElement(TLSG\Servers(), Str(Server))
-			
-			If *server 
-				;TLS!
-				ClientID = EventClient()
-				LockMutex(TLSG\muxClient) 
-				If FindMapElement(TLSG\Clients(), Str(ClientID))
-					tls_close(TLSG\Clients()\ctx)
-					tls_free(TLSG\Clients()\ctx)
-					DeleteMapElement(TLSG\Clients())
-				EndIf
-				UnlockMutex(TLSG\muxClient) 
-			EndIf
-			
-			UnlockMutex(TLSG\muxSever)
-			
-	EndSelect
-	
-	ProcedureReturn Result
+  Protected Result, Server, ClientID, ctx,*server.TLS_Connections
+  
+  Result = NetworkServerEvent(ServerID)
+  Select Result
+    Case #PB_NetworkEvent_Connect
+      
+      Server = EventServer()
+      Server = ServerID(Server)
+      LockMutex(TLSG\muxSever)
+      *server = FindMapElement(TLSG\Servers(), Str(Server))
+      UnlockMutex(TLSG\muxSever)
+      If *server 
+        ;TLS!
+        ClientID = EventClient()
+        If tls_accept_socket(*server\ctx, @ctx, ConnectionID(ClientID)) = -1
+          CloseNetworkConnection(ClientID)
+          Result = #PB_NetworkEvent_None
+        Else
+          LockMutex(TLSG\muxClient) 
+          AddMapElement(TLSG\Clients(),Str(ClientID))
+          TLSG\Clients()\ctx = ctx
+          UnlockMutex(TLSG\muxClient) 
+          tls_handshake(ctx)
+        EndIf
+      EndIf
+      
+    Case #PB_NetworkEvent_Disconnect
+      Server = EventServer()
+      Server = ServerID(Server)
+      LockMutex(TLSG\muxSever)
+      *server = FindMapElement(TLSG\Servers(), Str(Server))
+      If *server 
+        ;TLS!
+        ClientID = EventClient()
+        LockMutex(TLSG\muxClient) 
+        If FindMapElement(TLSG\Clients(), Str(ClientID))
+          tls_close(TLSG\Clients()\ctx)
+          tls_free(TLSG\Clients()\ctx)
+          DeleteMapElement(TLSG\Clients())
+        EndIf
+        UnlockMutex(TLSG\muxClient) 
+      EndIf
+      
+      UnlockMutex(TLSG\muxSever)
+      
+  EndSelect
+  
+  ProcedureReturn Result
 EndProcedure
 
 Procedure TLS_CloseNetworkServer(Server)
