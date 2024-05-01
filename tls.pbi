@@ -652,8 +652,10 @@ Procedure TLS_CloseNetworkConnection(ClientID)
   If *client   
     ;is TLS connection!
     CloseNetworkConnection(ClientID)
-    tls_close(*client\ctx)
-    tls_free(*client\ctx)
+    If *client\ctx 
+      tls_close(*client\ctx)
+      tls_free(*client\ctx)
+    EndIf 
     DeleteMapElement(TLSG\Clients(),key)
   Else
     CloseNetworkConnection(ClientID)

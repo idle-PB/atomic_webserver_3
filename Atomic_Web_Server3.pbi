@@ -491,6 +491,12 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               FreeMutex(clients()\lock) 
               FreeRegularExpression(clients()\regex) 
               DeleteMapElement(clients()) 
+              *Atomic_server\ClientCount - 1
+              Debug *Atomic_server\ClientCount
+            ElseIf ElapsedMilliseconds() > clients()\timeout 
+              clients()\kill = 1 
+              CloseNetworkConnection(clients()\ID) 
+              SignalSemaphore(Clients()\sem) 
             EndIf 
           Next 
           Delay(10)
@@ -522,9 +528,6 @@ Procedure Atomic_Server_Start(server,window=-1,bLog=0)
   If *atomic_server 
     *Atomic_Server\bLog = blog 
     Atomic_Server_Log_window\window = window
-    If (window = -1 And blog = 1) 
-      OpenConsole() 
-    EndIf 
     *Atomic_Server\tid = CreateThread(@Atomic_Server_Thread(),server) 
     If *Atomic_Server\tid 
       ProcedureReturn 1
@@ -543,10 +546,6 @@ Procedure Atomic_Server_Exit(server)
   If IsThread(*Atomic_Server\tid) 
     WaitThread(*Atomic_Server\tid) 
   EndIf 
-  If (Atomic_Server_Log_window\Window = -1 And *atomic_server\Blog)  
-    CloseConsole() 
-  EndIf   
-  
   FreeStructure(*Atomic_Server) 
   
 EndProcedure 
