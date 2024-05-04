@@ -133,6 +133,7 @@ Structure Atomic_Server
   DomainAlias.s
   packAddress.i
   packsize.i
+  mux.i
   Map proxy.Atomic_server_proxy(128)
   Map MimeTypes.s(128)
   Map MimeTypesComp.s(128) 
@@ -395,6 +396,7 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_server\timeout = 10000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
+    *atomic_server\mux = CreateMutex() 
     *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
         
     If domain = "" 
@@ -481,7 +483,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             Else 
               Delay(0) 
             EndIf   
-          Until Result <> *Atomic_Server\BufferSize
+          Until (Result <> *Atomic_Server\BufferSize)
           If (result > 0 And MaxRequest < *Atomic_server\BufferSize)  
             If FindMapElement(clients(),Str(clientid)) 
               LockMutex(Clients()\lock) 
@@ -520,9 +522,10 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               PrintN("Event None Free client" + Str(clientid) + " client count " + Str(*Atomic_server\ClientCount))
             ElseIf ElapsedMilliseconds() > clients()\timeout 
               clients()\kill = 1 
-              CloseNetworkConnection(clients()\ID) 
-              clients()\ID = 0 
+              ;CloseNetworkConnection(clients()\ID) 
+              ;clients()\ID = 0 
               SignalSemaphore(Clients()\sem) 
+              WaitThread(clients()\tid) 
               PrintN("Event None kill sent " + Str(clientid) + " client count " + Str(*Atomic_server\ClientCount))  
             EndIf 
           Next 
@@ -733,19 +736,20 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     If trylen > *Atomic_Server\BufferSize
       trylen = *Atomic_Server\BufferSize
     EndIf
-    If lock 
+    ;If lock 
       Repeat 
         If TryLockMutex(*atomic_client\lock) 
-          sendlen = SendNetworkData(*atomic_client\id, *Buffer+outpos, trylen)
+          sendlen = SendNe1tworkData(*atomic_client\id, *Buffer+outpos, trylen)
           UnlockMutex(*atomic_client\lock)
           Break 
         Else  
           Delay(10)
         EndIf 
       Until ElapsedMilliseconds() > *atomic_client\timeout
-    Else 
-      sendlen = SendNetworkData(*atomic_client\id, *Buffer+outpos, trylen)
-    EndIf 
+    ;Else 
+       
+    ;  sendlen = SendNetworkData(*atomic_client\id, *Buffer+outpos, trylen)
+    ;EndIf 
     If sendlen > 0
       outpos + sendlen
       *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
@@ -755,7 +759,7 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     If ElapsedMilliseconds() > *atomic_client\timeout
       Break    
     EndIf 
-    Delay(0) ;for context switching 
+    Delay(1) ;for context switching 
   Until (outpos >= len Or *atomic_client\kill) 
   
 EndProcedure   
@@ -1052,6 +1056,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
           atomic_request\RequestedFile = RequestedFile 
         EndIf   
         If *Atomic_Server\blog
+          LockMutex(*Atomic_Server\mux)
           If IsWindow(Atomic_Server_Log_window\window)
             *msg =  UTF8("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
             If *msg 
@@ -1059,7 +1064,8 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
             EndIf
           Else 
             PrintN("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
-          EndIf   
+          EndIf 
+          UnlockMutex(*Atomic_Server\mux) 
         EndIf       
         If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
           
@@ -1461,4 +1467,40 @@ Procedure Atomic_Server_ReadFile(*Atomic_Client.Atomic_Server_Client,file.s)
   
   ProcedureReturn *output 
   
-EndProcedure   
+EndProcedure  
+
+Procedure Atomic_Server_ErrorHandler()
+  Protected ErrorMessage.s
+  
+  ErrorMessage = "Atomic Server program error was detected:" + #CRLF$ 
+  ErrorMessage + #CRLF$
+  ErrorMessage + "Error Message:   " + ErrorMessage()      + #CRLF$
+  ErrorMessage + "Error Code:      " + Str(ErrorCode())    + #CRLF$  
+  ErrorMessage + "Code Address:    " + Str(ErrorAddress()) + #CRLF$
+  
+  If ErrorCode() = #PB_OnError_InvalidMemory   
+    ErrorMessage + "Target Address:  " + Str(ErrorTargetAddress()) + #CRLF$
+  EndIf
+  
+  If ErrorLine() = -1
+    ErrorMessage + "Sourcecode line: Enable OnError lines support to get code line information." + #CRLF$
+  Else
+    ErrorMessage + "Sourcecode line: " + Str(ErrorLine()) + #CRLF$
+    ErrorMessage + "Sourcecode file: " + ErrorFile() + #CRLF$
+  EndIf
+  
+  ErrorMessage + #CRLF$
+  ErrorMessage + "Register content:" + #CRLF$
+  ErrorMessage + "RAX = " + Str(ErrorRegister(#PB_OnError_RAX)) + #CRLF$
+  ErrorMessage + "RBX = " + Str(ErrorRegister(#PB_OnError_RBX)) + #CRLF$
+  ErrorMessage + "RCX = " + Str(ErrorRegister(#PB_OnError_RCX)) + #CRLF$
+  ErrorMessage + "RDX = " + Str(ErrorRegister(#PB_OnError_RDX)) + #CRLF$
+  ErrorMessage + "RBP = " + Str(ErrorRegister(#PB_OnError_RBP)) + #CRLF$
+  ErrorMessage + "RSI = " + Str(ErrorRegister(#PB_OnError_RSI)) + #CRLF$
+  ErrorMessage + "RDI = " + Str(ErrorRegister(#PB_OnError_RDI)) + #CRLF$
+  ErrorMessage + "RSP = " + Str(ErrorRegister(#PB_OnError_RSP)) + #CRLF$
+  
+  PrintN(ErrorMessage$)
+  End
+  
+EndProcedure

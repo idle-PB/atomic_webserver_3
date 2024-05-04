@@ -475,6 +475,7 @@ Procedure TLS_NetworkServerEvent(ServerID)
           Result = #PB_NetworkEvent_None
         Else
           LockMutex(TLSG\muxClient) 
+          
           AddMapElement(TLSG\Clients(),Str(ClientID))
           TLSG\Clients()\ctx = ctx
           If tls_handshake(ctx) = -1 
@@ -482,6 +483,7 @@ Procedure TLS_NetworkServerEvent(ServerID)
             DeleteMapElement(TLSG\Clients(),Str(ClientID))
             Result = #PB_NetworkEvent_None
           EndIf 
+          
           UnlockMutex(TLSG\muxClient)  
         EndIf
       EndIf
@@ -492,12 +494,12 @@ Procedure TLS_NetworkServerEvent(ServerID)
       key = Str(ClientID)
       LockMutex(TLSG\muxClient) 
       *client = FindMapElement(TLSG\Clients(),key) 
-      UnlockMutex(TLSG\muxClient) 
       If *client 
         tls_close(*client\ctx)
         tls_free(*client\ctx)
         DeleteMapElement(TLSG\Clients(),key)
       EndIf
+      UnlockMutex(TLSG\muxClient)
       
   EndSelect
   
@@ -507,9 +509,11 @@ EndProcedure
 Procedure TLS_CloseNetworkServer(Server)
   Protected *client.TLS_Connections 
   Protected key.s = Str(Server)
+  
   LockMutex(TLSG\muxClient) 
+  
   *client = FindMapElement(TLSG\Clients(),key) 
-  UnlockMutex(TLSG\muxClient) 
+  
   If *client 
     ;is TLS connection!
     CloseNetworkServer(Server)
@@ -519,6 +523,8 @@ Procedure TLS_CloseNetworkServer(Server)
   Else
     CloseNetworkServer(Server)
   EndIf
+  
+  UnlockMutex(TLSG\muxClient) 
   
 EndProcedure
 
@@ -590,14 +596,16 @@ Procedure TLS_ReceiveNetworkData(ClientID, Buffer, Length)
   Protected Result,*client.TLS_Connections 
   
   LockMutex(TLSG\muxClient) 
-  *client = FindMapElement(TLSG\Clients(), Str(ClientID))
-  UnlockMutex(TLSG\muxClient)   
   
+  *client = FindMapElement(TLSG\Clients(), Str(ClientID))
+    
   If *client 
     Result = tls_read(*client\ctx, Buffer, Length)
   Else
     Result = ReceiveNetworkData(ClientID, Buffer, Length)
   EndIf
+  
+  UnlockMutex(TLSG\muxClient)
   
   ProcedureReturn Result
 EndProcedure
@@ -606,13 +614,16 @@ Procedure TLS_SendNetworkData(ClientID, Buffer, Length)
   Protected Result,*client.TLS_Connections
   
   LockMutex(TLSG\muxClient) 
+  
   *client = FindMapElement(TLSG\Clients(), Str(ClientID))
-  UnlockMutex(TLSG\muxClient)
+  
   If *client   
     Result = tls_write(*client\ctx, Buffer, Length)
   Else
     Result = SendNetworkData(ClientID, Buffer, Length)
   EndIf
+  
+  UnlockMutex(TLSG\muxClient)
   
   ProcedureReturn Result
 EndProcedure
@@ -621,8 +632,9 @@ Procedure TLS_SendNetworkString(ClientID, String$, Format)
   Protected Result, *Buffer,*client.TLS_Connections
   
   LockMutex(TLSG\muxClient) 
+  
   *client = FindMapElement(TLSG\Clients(), Str(ClientID))
-  UnlockMutex(TLSG\muxClient)
+  
   If *client 
     Select Format
       Case #PB_Ascii
@@ -640,15 +652,18 @@ Procedure TLS_SendNetworkString(ClientID, String$, Format)
     Result = SendNetworkString(ClientID, String$, Format)
   EndIf
   
+  UnlockMutex(TLSG\muxClient)
+  
   ProcedureReturn Result
 EndProcedure
 
 Procedure TLS_CloseNetworkConnection(ClientID)
   Protected *client.TLS_Connections,key.s 
   key =  Str(ClientID)
+  
   LockMutex(TLSG\muxClient) 
+  
   *client = FindMapElement(TLSG\Clients(), key)
-  UnlockMutex(TLSG\muxClient) 
   If *client   
     ;is TLS connection!
     CloseNetworkConnection(ClientID)
@@ -660,6 +675,9 @@ Procedure TLS_CloseNetworkConnection(ClientID)
   Else
     CloseNetworkConnection(ClientID)
   EndIf
+  
+  UnlockMutex(TLSG\muxClient)
+  
 EndProcedure
 
 Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")

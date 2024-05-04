@@ -31,7 +31,7 @@
 
 
 ; Description
-;A streaming file packer, with support for files up to 8 exabytes on supported filesystems
+;A streaming file packer
 ;ascii And unicode
 
 ;History 1.0.6 
@@ -409,8 +409,6 @@ Procedure iEzPack_Pack(*this.EzPack)
                     ;Debug *this\Sourcefiles()\path   
                     EzPackError(*this,"Compress Error " + *this\Sourcefiles()\path,0)
                   EndIf 
-                Else 
-                  EzPackError(*this,"Read Error line 389 :" + *this\Sourcefiles()\path,1)  
                 EndIf 
               Else 
                 cpart = 0 
@@ -852,8 +850,7 @@ Procedure.i iEzPack_UnPack(*this.EzPack)
           *this\Current = *this\CompressFiles()\finish
           *this\cbEzpackProgress(totaloutput*scaleprogress,*this\CompressFiles()\finish)
         EndIf 
-        
-        
+            
         
         Delay(0)
       Next   
@@ -939,8 +936,6 @@ Procedure.i EzPack_UnPackSelectedToMemory(*this.EzPack,Thread=0)
     ProcedureReturn iEzPack_UnPack(*this) 
   EndIf    
 EndProcedure    
-
-
 
 Procedure.i EzPack_OpenFile(*this.EzPack,File.s)
   Protected *ele.EzPack_FileIndex,key.s 
