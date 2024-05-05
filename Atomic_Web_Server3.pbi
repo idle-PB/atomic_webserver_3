@@ -740,7 +740,7 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     
     Repeat 
       If TryLockMutex(*atomic_client\lock) 
-        sendlen = SendNe1tworkData(*atomic_client\id, *Buffer+outpos, trylen)
+        sendlen = SendNetworkData(*atomic_client\id, *Buffer+outpos, trylen)
         UnlockMutex(*atomic_client\lock)
         Break 
       Else  
