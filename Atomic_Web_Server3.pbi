@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b1
+;Version 3.1.0b2
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -522,8 +522,8 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               PrintN("Event None Free client" + Str(clientid) + " client count " + Str(*Atomic_server\ClientCount))
             ElseIf ElapsedMilliseconds() > clients()\timeout 
               clients()\kill = 1 
-              ;CloseNetworkConnection(clients()\ID) 
-              ;clients()\ID = 0 
+              CloseNetworkConnection(clients()\ID) 
+              clients()\ID = 0 
               SignalSemaphore(Clients()\sem) 
               WaitThread(clients()\tid) 
               PrintN("Event None kill sent " + Str(clientid) + " client count " + Str(*Atomic_server\ClientCount))  
@@ -732,29 +732,26 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
   Protected outpos,trylen,sendlen
   
   Repeat
+    
     trylen = len - outpos
     If trylen > *Atomic_Server\BufferSize
       trylen = *Atomic_Server\BufferSize
     EndIf
-    ;If lock 
-      Repeat 
-        If TryLockMutex(*atomic_client\lock) 
-          sendlen = SendNe1tworkData(*atomic_client\id, *Buffer+outpos, trylen)
-          UnlockMutex(*atomic_client\lock)
-          Break 
-        Else  
-          Delay(10)
-        EndIf 
-      Until ElapsedMilliseconds() > *atomic_client\timeout
-    ;Else 
-       
-    ;  sendlen = SendNetworkData(*atomic_client\id, *Buffer+outpos, trylen)
-    ;EndIf 
+    
+    Repeat 
+      If TryLockMutex(*atomic_client\lock) 
+        sendlen = SendNe1tworkData(*atomic_client\id, *Buffer+outpos, trylen)
+        UnlockMutex(*atomic_client\lock)
+        Break 
+      Else  
+        Delay(10)
+      EndIf 
+    Until ElapsedMilliseconds() > *atomic_client\timeout
     If sendlen > 0
       outpos + sendlen
       *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
     Else
-      Delay(20)
+      Delay(20) 
     EndIf 
     If ElapsedMilliseconds() > *atomic_client\timeout
       Break    
@@ -1004,18 +1001,18 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
       EndIf
       UnlockMutex(*Atomic_Client\lock)
     EndIf
-       
-      
-      request.s = URLDecoder(atomic_request\Request)
-      type.s = Left(request,4)   
-      If FindString(type,"GET",1)
-        atomic_request\type = #ATOMIC_SERVER_GET 
-      ElseIf FindString(type,"POST",1)  
-        atomic_request\type = #ATOMIC_SERVER_POST
-      ElseIf FindString(type,"HEAD",1)  
-        atomic_request\type = #ATOMIC_SERVER_HEAD
-      EndIf 
-      
+    
+    
+    request.s = URLDecoder(atomic_request\Request)
+    type.s = Left(request,4)   
+    If FindString(type,"GET",1)
+      atomic_request\type = #ATOMIC_SERVER_GET 
+    ElseIf FindString(type,"POST",1)  
+      atomic_request\type = #ATOMIC_SERVER_POST
+    ElseIf FindString(type,"HEAD",1)  
+      atomic_request\type = #ATOMIC_SERVER_HEAD
+    EndIf 
+    
     If (atomic_request\clientID <> 0  And atomic_request\type <> 0) 
       
       
@@ -1086,7 +1083,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
                 FileLength  = *Atomic_Client\pack\getfilesize(fn)
               CompilerEndIf  
             Else   
-               FileLength = Lof(fn)
+              FileLength = Lof(fn)
             EndIf 
             
             atomic_request\status = 200 
@@ -1134,17 +1131,17 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
           EndIf
         EndIf 
         If fn 
-          If GetExtensionPart(atomic_request\RequestedFile) = "pbh"  ;check for preprocess 
-                        
+          If GetExtensionPart(atomic_request\RequestedFile) = "pbh" Or GetExtensionPart(atomic_request\RequestedFile) = "htm"  ;check for preprocess 
+            
             If *Atomic_Server\packAddress 
-                CompilerIf #USEEZPACK 
-                  *preprocess  = AllocateMemory(FileLength)
-                  CopyMemory(*Atomic_Client\pack\CatchFile(fn),*preprocess,FileLength)     
-                CompilerEndIf
-             Else 
-               *preprocess  = AllocateMemory(FileLength)
-               ReadData(fn, *preprocess, FileLength)
-             EndIf  
+              CompilerIf #USEEZPACK 
+                *preprocess  = AllocateMemory(FileLength)
+                CopyMemory(*Atomic_Client\pack\CatchFile(fn),*preprocess,FileLength)     
+              CompilerEndIf
+            Else 
+              *preprocess  = AllocateMemory(FileLength)
+              ReadData(fn, *preprocess, FileLength)
+            EndIf  
             
             *output = Atomic_Server_Preprocess(*preprocess,FileLength,@atomic_request)  ;preprocess page 
             If atomic_request\bcompress
@@ -1152,31 +1149,31 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
             EndIf   
             FileLength = MemorySize(*output)
             If atomic_request\type = #ATOMIC_SERVER_HEAD
-               atomic_request\status = 100    
-               *FileBuffer  = AllocateMemory(8192)
-               *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
-               FileLength = 0 
+              atomic_request\status = 100    
+              *FileBuffer  = AllocateMemory(8192)
+              *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
+              FileLength = 0 
             Else  
-               *FileBuffer   = AllocateMemory(FileLength + 8192)
-               *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
-               CopyMemory(*output,*BufferOffset,FileLength) 
-               FreeMemory(*preprocess)
-               FreeMemory(*output) 
+              *FileBuffer   = AllocateMemory(FileLength + 8192)
+              *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
+              CopyMemory(*output,*BufferOffset,FileLength) 
+              FreeMemory(*preprocess)
+              FreeMemory(*output) 
             EndIf    
           Else    
-             If *Atomic_Server\packAddress 
-               CompilerIf #USEEZPACK
-                 *output = AllocateMemory(FileLength)
-                 CopyMemory(*Atomic_Client\pack\CatchFile(fn),*output,FileLength)    
-               CompilerEndIf      
-             Else             
-               *output = AllocateMemory(FileLength)
-               If *output 
-                 ReadData(fn,*output, FileLength) 
-               EndIf   
-             EndIf    
-             If *output 
-               If atomic_request\bcompress
+            If *Atomic_Server\packAddress 
+              CompilerIf #USEEZPACK
+                *output = AllocateMemory(FileLength)
+                CopyMemory(*Atomic_Client\pack\CatchFile(fn),*output,FileLength)    
+              CompilerEndIf      
+            Else             
+              *output = AllocateMemory(FileLength)
+              If *output 
+                ReadData(fn,*output, FileLength) 
+              EndIf   
+            EndIf    
+            If *output 
+              If atomic_request\bcompress
                 *output = Atomic_Server_deflate(@atomic_request,*output,MemorySize(*output)) 
               EndIf   
               
@@ -1194,13 +1191,13 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
               FreeMemory(*output)
             EndIf 
           EndIf   
-           If *Atomic_Server\packAddress 
-             CompilerIf #USEEZPACK
-               *Atomic_Client\pack\CloseFile(fn)  
-             CompilerEndIf   
-           Else   
-             CloseFile(fn)
-           EndIf   
+          If *Atomic_Server\packAddress 
+            CompilerIf #USEEZPACK
+              *Atomic_Client\pack\CloseFile(fn)  
+            CompilerEndIf   
+          Else   
+            CloseFile(fn)
+          EndIf   
           outpos = 0
           fulllen = *BufferOffset - *FileBuffer + FileLength
           Atomic_Server_send(@atomic_request,*FileBuffer,fulllen) 
