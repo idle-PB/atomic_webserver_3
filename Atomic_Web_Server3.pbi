@@ -517,16 +517,15 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                   clients()\pack\Free()
                 CompilerEndIf 
               EndIf              
-               DeleteMapElement(clients()) 
               *Atomic_server\ClientCount - 1
-              PrintN("Event None Free client" + Str(clientid) + " client count " + Str(*Atomic_server\ClientCount))
+              PrintN("Event None Free client " + Str(clients()\ID) + " client count " + Str(*Atomic_server\ClientCount))
+              DeleteMapElement(clients())   
             ElseIf ElapsedMilliseconds() > clients()\timeout 
-              clients()\kill = 1 
+              Clients()\kill = 1 
+              PrintN("Event None kill Sent " + Str(clients()\id) + " client count " + Str(*Atomic_server\ClientCount))  
               CloseNetworkConnection(clients()\ID) 
-              clients()\ID = 0 
               SignalSemaphore(Clients()\sem) 
               WaitThread(clients()\tid) 
-              PrintN("Event None kill sent " + Str(clientid) + " client count " + Str(*Atomic_server\ClientCount))  
             EndIf 
           Next 
           Delay(10)
@@ -994,218 +993,222 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
     ClearStructure(@atomic_request,Atomic_Server_Request)
     WaitSemaphore(*Atomic_Client\sem) 
     
-    If TryLockMutex(*Atomic_Client\lock)
-      If FirstElement(*Atomic_Client\Requests())
-        CopyStructure(@*Atomic_Client\Requests(),@atomic_request,Atomic_Server_Request)
-        DeleteElement(*Atomic_Client\Requests())
+    If *Atomic_Client\kill = 0
+      
+      If TryLockMutex(*Atomic_Client\lock)
+        If FirstElement(*Atomic_Client\Requests())
+          CopyStructure(@*Atomic_Client\Requests(),@atomic_request,Atomic_Server_Request)
+          DeleteElement(*Atomic_Client\Requests())
+        EndIf
+        UnlockMutex(*Atomic_Client\lock)
       EndIf
-      UnlockMutex(*Atomic_Client\lock)
-    EndIf
-    
-    
-    request.s = URLDecoder(atomic_request\Request)
-    type.s = Left(request,4)   
-    If FindString(type,"GET",1)
-      atomic_request\type = #ATOMIC_SERVER_GET 
-    ElseIf FindString(type,"POST",1)  
-      atomic_request\type = #ATOMIC_SERVER_POST
-    ElseIf FindString(type,"HEAD",1)  
-      atomic_request\type = #ATOMIC_SERVER_HEAD
-    EndIf 
-    
-    If (atomic_request\clientID <> 0  And atomic_request\type <> 0) 
       
       
-      Atomic_Server_GetRequestHeaders(@atomic_request)
+      request.s = URLDecoder(atomic_request\Request)
+      type.s = Left(request,4)   
+      If FindString(type,"GET",1)
+        atomic_request\type = #ATOMIC_SERVER_GET 
+      ElseIf FindString(type,"POST",1)  
+        atomic_request\type = #ATOMIC_SERVER_POST
+      ElseIf FindString(type,"HEAD",1)  
+        atomic_request\type = #ATOMIC_SERVER_HEAD
+      EndIf 
       
-      If atomic_request\type  
-        MaxPosition = FindString(Request, Chr(13), 5)
-        Position = FindString(Request, " ", 5)
-        If Position < MaxPosition
-          RequestedFile = Mid(Request, 6, Position-5)      ; Automatically remove the leading '/'
-          RequestedFile = RTrim(RequestedFile)
-        Else
-          RequestedFile = Mid(Request, 6, MaxPosition-5)   ; When a command like 'GET /' is sent..
-        EndIf
-        count = Atomic_Server_GetParameters(@atomic_request)
-        FileLeft = FindString(RequestedFile,"?")
-        If Fileleft 
-          RequestedFile = Left(RequestedFile,Fileleft-1)  ;trim the request file 
-        EndIf 
-        start = FindString(request,"Host:") + 6 
-        Position = FindString(request,#CR$,start)   
-        atomic_request\host = Mid(request,start,Position-start); + "/"
-        If FindString(atomic_request\Host,"..") 
-          atomic_request\host ="" 
-        EndIf   
-        If RequestedFile = "" ; if there was no page requested 
-          RequestedFile = *Atomic_Server\WWWIndex      
-        EndIf
-        Trim(atomic_request\Host," ") 
-        If (FindString(atomic_request\host,"127.0.0.1") = 0 And FindString(atomic_request\host,"localhost") = 0 And FindString(atomic_request\Host,"[::1]")=0) ;trim out ip or add domain alias
-          If *Atomic_Server\ip = atomic_request\Host 
-            atomic_request\host = *Atomic_Server\DomainAlias 
-            atomic_request\RequestedFile = atomic_request\host + "/" + RequestedFile   
-          Else   
-            atomic_request\RequestedFile = atomic_request\host + "/" + RequestedFile
+      If atomic_request\type <> 0 
+        
+        
+        Atomic_Server_GetRequestHeaders(@atomic_request)
+        
+        If atomic_request\type  
+          MaxPosition = FindString(Request, Chr(13), 5)
+          Position = FindString(Request, " ", 5)
+          If Position < MaxPosition
+            RequestedFile = Mid(Request, 6, Position-5)      ; Automatically remove the leading '/'
+            RequestedFile = RTrim(RequestedFile)
+          Else
+            RequestedFile = Mid(Request, 6, MaxPosition-5)   ; When a command like 'GET /' is sent..
+          EndIf
+          count = Atomic_Server_GetParameters(@atomic_request)
+          FileLeft = FindString(RequestedFile,"?")
+          If Fileleft 
+            RequestedFile = Left(RequestedFile,Fileleft-1)  ;trim the request file 
+          EndIf 
+          start = FindString(request,"Host:") + 6 
+          Position = FindString(request,#CR$,start)   
+          atomic_request\host = Mid(request,start,Position-start); + "/"
+          If FindString(atomic_request\Host,"..") 
+            atomic_request\host ="" 
           EndIf   
-        Else     
-          atomic_request\RequestedFile = RequestedFile 
-        EndIf   
-        If *Atomic_Server\blog
-          LockMutex(*Atomic_Server\mux)
-          If IsWindow(Atomic_Server_Log_window\window)
-            *msg =  UTF8("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
-            If *msg 
-              PostEvent(#ATOMIC_SERVER_EVENT_ADD,Atomic_Server_Log_window\window,0,0,*msg)
-            EndIf
-          Else 
-            PrintN("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
-          EndIf 
-          UnlockMutex(*Atomic_Server\mux) 
-        EndIf       
-        If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
-          
-          If *Atomic_Server\packAddress 
-            CompilerIf #USEEZPACK 
-              fn = *Atomic_Client\pack\OpenFile(atomic_request\RequestedFile) 
-              FileLength  = *Atomic_Client\pack\getfilesize(fn)
-            CompilerEndIf 
-          Else   
-            fn = ReadFile(-1, *Atomic_Server\WWWDirectory + atomic_request\RequestedFile,#PB_UTF8 | #PB_File_SharedRead)
-            FileLength = Lof(fn)
-          EndIf 
-          
-          If fn   
+          If RequestedFile = "" ; if there was no page requested 
+            RequestedFile = *Atomic_Server\WWWIndex      
+          EndIf
+          Trim(atomic_request\Host," ") 
+          If (FindString(atomic_request\host,"127.0.0.1") = 0 And FindString(atomic_request\host,"localhost") = 0 And FindString(atomic_request\Host,"[::1]")=0) ;trim out ip or add domain alias
+            If *Atomic_Server\ip = atomic_request\Host 
+              atomic_request\host = *Atomic_Server\DomainAlias 
+              atomic_request\RequestedFile = atomic_request\host + "/" + RequestedFile   
+            Else   
+              atomic_request\RequestedFile = atomic_request\host + "/" + RequestedFile
+            EndIf   
+          Else     
+            atomic_request\RequestedFile = RequestedFile 
+          EndIf   
+          If *Atomic_Server\blog
+            LockMutex(*Atomic_Server\mux)
+            If IsWindow(Atomic_Server_Log_window\window)
+              *msg =  UTF8("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
+              If *msg 
+                PostEvent(#ATOMIC_SERVER_EVENT_ADD,Atomic_Server_Log_window\window,0,0,*msg)
+              EndIf
+            Else 
+              PrintN("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
+            EndIf 
+            UnlockMutex(*Atomic_Server\mux) 
+          EndIf       
+          If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
             
             If *Atomic_Server\packAddress 
               CompilerIf #USEEZPACK 
+                fn = *Atomic_Client\pack\OpenFile(atomic_request\RequestedFile) 
                 FileLength  = *Atomic_Client\pack\getfilesize(fn)
-              CompilerEndIf  
+              CompilerEndIf 
             Else   
+              fn = ReadFile(-1, *Atomic_Server\WWWDirectory + atomic_request\RequestedFile,#PB_UTF8 | #PB_File_SharedRead)
               FileLength = Lof(fn)
             EndIf 
             
-            atomic_request\status = 200 
-            If FindMapElement(*Atomic_server\MimeTypesComp(),GetExtensionPart(atomic_request\RequestedFile)) ;check mime types for compression 
-              ContentType = *Atomic_server\MimeTypescomp() 
-              Position = FindString(atomic_request\Request,"Accept-Encoding:") 
-              If Position 
-                Position = FindString(atomic_request\Request,"deflate",Position) 
-                If Position 
-                  atomic_request\bcompress = 1
-                EndIf
-              EndIf   
-            ElseIf FindMapElement(*Atomic_server\MimeTypes(),GetExtensionPart(atomic_request\RequestedFile)) ;check mime types for uncompressed
-              ContentType = *Atomic_server\MimeTypes()    
-            Else 
-              Position = FindString(atomic_request\Request,"Accept-Encoding:") 
-              If Position 
-                Position = FindString(atomic_request\Request,"deflate",Position) 
-                If Position
-                  atomic_request\bcompress = 1
-                EndIf
-              EndIf   
-              ContentType = "text/html" 
-            EndIf
-            If count > 0  ;if there are parameters call post or get callbacks 
-              If atomic_request\type = #ATOMIC_SERVER_POST
-                If *Atomic_Server\pCBPost 
-                  *Atomic_Server\pCBPost(@atomic_request)
-                EndIf
-              ElseIf *Atomic_Server\pCBGet 
-                *Atomic_Server\pCBGet(@atomic_request) 
-              EndIf   
-            EndIf 
-          Else
-            If Atomic_Server_ProcessURIRequest(*Atomic_Server,@atomic_request,atomic_request\RequestedFile) <> #True ;check for urihandelr 
-              If Atomic_Server_ProcessURIRequest(*Atomic_Server,@atomic_request,"error") <> #True                    ;check for built in error handler  
-                fn = ReadFile(-1, *Atomic_Server\WWWDirectory + *Atomic_Server\WWWError, #PB_UTF8 | #PB_File_SharedRead) ;fallback to file 
-                If fn 
-                  atomic_request\status = 404 
-                  FileLength = Lof(fn)
-                  ContentType = "text/html"        
-                EndIf
-              EndIf 
-            EndIf 
-          EndIf
-        EndIf 
-        If fn 
-          If GetExtensionPart(atomic_request\RequestedFile) = "pbh" Or GetExtensionPart(atomic_request\RequestedFile) = "htm"  ;check for preprocess 
-            
-            If *Atomic_Server\packAddress 
-              CompilerIf #USEEZPACK 
-                *preprocess  = AllocateMemory(FileLength)
-                CopyMemory(*Atomic_Client\pack\CatchFile(fn),*preprocess,FileLength)     
-              CompilerEndIf
-            Else 
-              *preprocess  = AllocateMemory(FileLength)
-              ReadData(fn, *preprocess, FileLength)
-            EndIf  
-            
-            *output = Atomic_Server_Preprocess(*preprocess,FileLength,@atomic_request)  ;preprocess page 
-            If atomic_request\bcompress
-              *output = Atomic_Server_deflate(@atomic_request,*output,MemorySize(*output))   
-            EndIf   
-            FileLength = MemorySize(*output)
-            If atomic_request\type = #ATOMIC_SERVER_HEAD
-              atomic_request\status = 100    
-              *FileBuffer  = AllocateMemory(8192)
-              *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
-              FileLength = 0 
-            Else  
-              *FileBuffer   = AllocateMemory(FileLength + 8192)
-              *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
-              CopyMemory(*output,*BufferOffset,FileLength) 
-              FreeMemory(*preprocess)
-              FreeMemory(*output) 
-            EndIf    
-          Else    
-            If *Atomic_Server\packAddress 
-              CompilerIf #USEEZPACK
-                *output = AllocateMemory(FileLength)
-                CopyMemory(*Atomic_Client\pack\CatchFile(fn),*output,FileLength)    
-              CompilerEndIf      
-            Else             
-              *output = AllocateMemory(FileLength)
-              If *output 
-                ReadData(fn,*output, FileLength) 
-              EndIf   
-            EndIf    
-            If *output 
-              If atomic_request\bcompress
-                *output = Atomic_Server_deflate(@atomic_request,*output,MemorySize(*output)) 
-              EndIf   
+            If fn   
               
+              If *Atomic_Server\packAddress 
+                CompilerIf #USEEZPACK 
+                  FileLength  = *Atomic_Client\pack\getfilesize(fn)
+                CompilerEndIf  
+              Else   
+                FileLength = Lof(fn)
+              EndIf 
+              
+              atomic_request\status = 200 
+              If FindMapElement(*Atomic_server\MimeTypesComp(),GetExtensionPart(atomic_request\RequestedFile)) ;check mime types for compression 
+                ContentType = *Atomic_server\MimeTypescomp() 
+                Position = FindString(atomic_request\Request,"Accept-Encoding:") 
+                If Position 
+                  Position = FindString(atomic_request\Request,"deflate",Position) 
+                  If Position 
+                    atomic_request\bcompress = 1
+                  EndIf
+                EndIf   
+              ElseIf FindMapElement(*Atomic_server\MimeTypes(),GetExtensionPart(atomic_request\RequestedFile)) ;check mime types for uncompressed
+                ContentType = *Atomic_server\MimeTypes()    
+              Else 
+                Position = FindString(atomic_request\Request,"Accept-Encoding:") 
+                If Position 
+                  Position = FindString(atomic_request\Request,"deflate",Position) 
+                  If Position
+                    atomic_request\bcompress = 1
+                  EndIf
+                EndIf   
+                ContentType = "text/html" 
+              EndIf
+              If count > 0  ;if there are parameters call post or get callbacks 
+                If atomic_request\type = #ATOMIC_SERVER_POST
+                  If *Atomic_Server\pCBPost 
+                    *Atomic_Server\pCBPost(@atomic_request)
+                  EndIf
+                ElseIf *Atomic_Server\pCBGet 
+                  *Atomic_Server\pCBGet(@atomic_request) 
+                EndIf   
+              EndIf 
+            Else
+              If Atomic_Server_ProcessURIRequest(*Atomic_Server,@atomic_request,atomic_request\RequestedFile) <> #True ;check for urihandelr 
+                If Atomic_Server_ProcessURIRequest(*Atomic_Server,@atomic_request,"error") <> #True                    ;check for built in error handler  
+                  fn = ReadFile(-1, *Atomic_Server\WWWDirectory + *Atomic_Server\WWWError, #PB_UTF8 | #PB_File_SharedRead) ;fallback to file 
+                  If fn 
+                    atomic_request\status = 404 
+                    FileLength = Lof(fn)
+                    ContentType = "text/html"        
+                  EndIf
+                EndIf 
+              EndIf 
+            EndIf
+          EndIf 
+          If fn 
+            If GetExtensionPart(atomic_request\RequestedFile) = "pbh" Or GetExtensionPart(atomic_request\RequestedFile) = "htm"  ;check for preprocess 
+              
+              If *Atomic_Server\packAddress 
+                CompilerIf #USEEZPACK 
+                  *preprocess  = AllocateMemory(FileLength)
+                  CopyMemory(*Atomic_Client\pack\CatchFile(fn),*preprocess,FileLength)     
+                CompilerEndIf
+              Else 
+                *preprocess  = AllocateMemory(FileLength)
+                ReadData(fn, *preprocess, FileLength)
+              EndIf  
+              
+              *output = Atomic_Server_Preprocess(*preprocess,FileLength,@atomic_request)  ;preprocess page 
+              If atomic_request\bcompress
+                *output = Atomic_Server_deflate(@atomic_request,*output,MemorySize(*output))   
+              EndIf   
               FileLength = MemorySize(*output)
               If atomic_request\type = #ATOMIC_SERVER_HEAD
                 atomic_request\status = 100    
                 *FileBuffer  = AllocateMemory(8192)
                 *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
                 FileLength = 0 
-              Else 
-                *FileBuffer  = AllocateMemory(FileLength + 8192)
+              Else  
+                *FileBuffer   = AllocateMemory(FileLength + 8192)
                 *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
-                CopyMemory(*output,*BufferOffset, FileLength)
+                CopyMemory(*output,*BufferOffset,FileLength) 
+                FreeMemory(*preprocess)
+                FreeMemory(*output) 
+              EndIf    
+            Else    
+              If *Atomic_Server\packAddress 
+                CompilerIf #USEEZPACK
+                  *output = AllocateMemory(FileLength)
+                  CopyMemory(*Atomic_Client\pack\CatchFile(fn),*output,FileLength)    
+                CompilerEndIf      
+              Else             
+                *output = AllocateMemory(FileLength)
+                If *output 
+                  ReadData(fn,*output, FileLength) 
+                EndIf   
+              EndIf    
+              If *output 
+                If atomic_request\bcompress
+                  *output = Atomic_Server_deflate(@atomic_request,*output,MemorySize(*output)) 
+                EndIf   
+                
+                FileLength = MemorySize(*output)
+                If atomic_request\type = #ATOMIC_SERVER_HEAD
+                  atomic_request\status = 100    
+                  *FileBuffer  = AllocateMemory(8192)
+                  *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
+                  FileLength = 0 
+                Else 
+                  *FileBuffer  = AllocateMemory(FileLength + 8192)
+                  *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
+                  CopyMemory(*output,*BufferOffset, FileLength)
+                EndIf 
+                FreeMemory(*output)
               EndIf 
-              FreeMemory(*output)
-            EndIf 
-          EndIf   
-          If *Atomic_Server\packAddress 
-            CompilerIf #USEEZPACK
-              *Atomic_Client\pack\CloseFile(fn)  
-            CompilerEndIf   
-          Else   
-            CloseFile(fn)
-          EndIf   
-          outpos = 0
-          fulllen = *BufferOffset - *FileBuffer + FileLength
-          Atomic_Server_send(@atomic_request,*FileBuffer,fulllen) 
-          FreeMemory(*FileBuffer)
-        EndIf 
-      EndIf
+            EndIf   
+            If *Atomic_Server\packAddress 
+              CompilerIf #USEEZPACK
+                *Atomic_Client\pack\CloseFile(fn)  
+              CompilerEndIf   
+            Else   
+              CloseFile(fn)
+            EndIf   
+            outpos = 0
+            fulllen = *BufferOffset - *FileBuffer + FileLength
+            Atomic_Server_send(@atomic_request,*FileBuffer,fulllen) 
+            FreeMemory(*FileBuffer)
+          EndIf 
+        EndIf
+        
+      EndIf  
       
-    EndIf  
+    EndIf 
     
   Until *Atomic_Client\kill And ListSize(*Atomic_Client\requests()) = 0
   
