@@ -1497,7 +1497,7 @@ Procedure Atomic_Server_ErrorHandler()
   ErrorMessage + "RDI = " + Str(ErrorRegister(#PB_OnError_RDI)) + #CRLF$
   ErrorMessage + "RSP = " + Str(ErrorRegister(#PB_OnError_RSP)) + #CRLF$
   
-  PrintN(ErrorMessage$)
+  PrintN(ErrorMessage)
   End
   
 EndProcedure
