@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b2
+;Version 3.1.0b3
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -13,7 +13,7 @@ EnableExplicit
 
 ;notes on linux to run a server without sudo the exe    
 ;sudo setcap CAP_NET_BIND_SERVICE=+eip /path/to/binary
- 
+
 CompilerIf Not #PB_Compiler_Thread 
   MessageRequester("Atomic Web Server v3","Compile with thread safe!")
   End 
@@ -398,7 +398,7 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_Server\pCBGet = *pCBGet 
     *atomic_server\mux = CreateMutex() 
     *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
-        
+    
     If domain = "" 
       *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
       *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon()   
@@ -477,15 +477,18 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
           Repeat
             FillMemory(*buffer,*Atomic_Server\BufferSize+2,0,#PB_Byte)
             Result = ReceiveNetworkData(ClientID, *Buffer, *Atomic_Server\BufferSize)
-            If (result > 0 And MaxRequest < *Atomic_server\BufferSize)  
+            If result > 0 
               Request + PeekS(*Buffer, Result, #PB_UTF8 | #PB_ByteLength)
-              MaxRequest + result   
+              MaxRequest + result
+              If MaxRequest > *Atomic_server\BufferSize
+                Break 
+              EndIf   
             Else 
               Delay(0) 
             EndIf   
           Until (Result <> *Atomic_Server\BufferSize)
-          If (result > 0 And MaxRequest < *Atomic_server\BufferSize)  
-            If FindMapElement(clients(),Str(clientid)) 
+          If FindMapElement(clients(),Str(clientid)) 
+            If (result > 0 And MaxRequest < *Atomic_server\BufferSize)  
               LockMutex(Clients()\lock) 
               LastElement(Clients()\requests()) 
               AddElement(Clients()\requests())
@@ -496,9 +499,26 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               clients()\timeout = ElapsedMilliseconds() + *Atomic_server\timeout 
               UnlockMutex(clients()\lock)
               SignalSemaphore(Clients()\sem) 
-            EndIf
-           EndIf 
-           PrintN("Data " + Str(clientid) + " recived " + Str(result))
+            ElseIf ElapsedMilliseconds() > clients()\timeout   
+              clients()\kill = 1 
+              SignalSemaphore(Clients()\sem) 
+              If clients()\done 
+                FreeMutex(clients()\lock) 
+                FreeRegularExpression(clients()\regex) 
+                If *Atomic_Server\packAddress 
+                  CompilerIf #USEEZPACK 
+                    clients()\pack\Free()
+                  CompilerEndIf 
+                EndIf              
+                *Atomic_server\ClientCount - 1
+                PrintN("timed out in data shut down" + Str(clients()\ID) + " client count " + Str(*Atomic_server\ClientCount))
+                DeleteMapElement(clients())   
+              EndIf
+            EndIf 
+          Else   
+            CloseNetworkConnection(clientid)
+            PrintN("Data unmapped " + Str(clientid) + " recived " + Str(result))
+          EndIf 
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
           If FindMapElement(clients(),Str(clientID))  
@@ -506,14 +526,13 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             SignalSemaphore(Clients()\sem) 
           EndIf
           PrintN("client Disconnect " + Str(clientid) + " kill sent ")
-          
         Case #PB_NetworkEvent_None 
           ForEach clients() 
             If clients()\done 
               FreeMutex(clients()\lock) 
               FreeRegularExpression(clients()\regex) 
               If *Atomic_Server\packAddress 
-                 CompilerIf #USEEZPACK 
+                CompilerIf #USEEZPACK 
                   clients()\pack\Free()
                 CompilerEndIf 
               EndIf              
@@ -1132,6 +1151,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
             EndIf
           EndIf 
           If fn 
+            
             If GetExtensionPart(atomic_request\RequestedFile) = "pbh" Or GetExtensionPart(atomic_request\RequestedFile) = "htm"  ;check for preprocess 
               
               If *Atomic_Server\packAddress 
