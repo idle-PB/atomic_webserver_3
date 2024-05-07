@@ -466,7 +466,7 @@ Procedure TLS_NetworkServerEvent(ServerID)
       Server = ServerID(Server)
       LockMutex(TLSG\muxSever)
       *server = FindMapElement(TLSG\Servers(), Str(Server))
-      UnlockMutex(TLSG\muxSever)
+      ;UnlockMutex(TLSG\muxSever)
       If *server 
         ;TLS!
         ClientID = EventClient()
@@ -487,7 +487,7 @@ Procedure TLS_NetworkServerEvent(ServerID)
           UnlockMutex(TLSG\muxClient)  
         EndIf
       EndIf
-      
+       UnlockMutex(TLSG\muxSever)
     Case #PB_NetworkEvent_Disconnect
       
       ClientID = EventClient()

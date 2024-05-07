@@ -1089,11 +1089,9 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
             If *Atomic_Server\packAddress 
               CompilerIf #USEEZPACK 
                 fn = *Atomic_Client\pack\OpenFile(atomic_request\RequestedFile) 
-                FileLength  = *Atomic_Client\pack\getfilesize(fn)
               CompilerEndIf 
             Else   
               fn = ReadFile(-1, *Atomic_Server\WWWDirectory + atomic_request\RequestedFile,#PB_UTF8 | #PB_File_SharedRead)
-              FileLength = Lof(fn)
             EndIf 
             
             If fn   
