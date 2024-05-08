@@ -1040,7 +1040,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
         
         If atomic_request\type  
           MaxPosition = FindString(Request, Chr(13), 5)
-          Position = FindString(Request, " ", 5)
+          Position = FindString(Request, " ", 6)
           If Position < MaxPosition
             RequestedFile = Mid(Request, 6, Position-5)      ; Automatically remove the leading '/'
             RequestedFile = RTrim(RequestedFile)
