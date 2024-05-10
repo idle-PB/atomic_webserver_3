@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b3
+;Version 3.1.0b4
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -134,6 +134,7 @@ Structure Atomic_Server
   packAddress.i
   packsize.i
   mux.i
+  CacheAge.i 
   Map proxy.Atomic_server_proxy(128)
   Map MimeTypes.s(128)
   Map MimeTypesComp.s(128) 
@@ -283,11 +284,11 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
 EndProcedure 
 
 ;-Declares 
-Declare Atomic_Server_Init(Title.s,WWWDirectory.s,Ip.s="127.0.0.1",domain.s="",Port=80,IpVer=#PB_Network_IPv4,maxClients=1000,*pCBPost=0,*pCBGet=0) 
+Declare Atomic_Server_Init(Title.s,WWWDirectory.s,Ip.s="127.0.0.1",domain.s="",Port=80,IpVer=#PB_Network_IPv4,maxClients=1000,*pCBPost=0,*pCBGet=0,CacheAge=0) 
 Declare Atomic_Server_Start(Server,window=-1,Blog=0)                                                 
 Declare Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
 Declare Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)                                    
-Declare Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0)
+Declare Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0,bCache=1)
 Declare Atomic_Server_Resize()
 Declare Atomic_Server_Exit(Server)                                                  
 Declare Atomic_Server_Index(*request.Atomic_Server_Request) 
@@ -378,7 +379,7 @@ CompilerIf #Loadtest <> 0
   
 CompilerEndIf   
 
-Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=1000,*pCBPost=0,*pCBGet=0) 
+Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=1000,*pCBPost=0,*pCBGet=0,CacheAge=0) 
   
   Protected *atomic_server.Atomic_Server 
   *atomic_server= AllocateStructure(Atomic_Server) 
@@ -396,6 +397,7 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_server\timeout = 10000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
+    *atomic_server\CacheAge = CacheAge 
     *atomic_server\mux = CreateMutex() 
     *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
     
@@ -419,6 +421,28 @@ Procedure Atomic_Server_Init_TLS(server,path.s,CertFile.s,KeyFile.s,CaCertFile.s
   *atomic_server\KeyFile = path + KeyFile 
   *atomic_server\CertFile = path + CertFile 
 EndProcedure  
+
+Procedure Atomic_Server_FreeClient(*client.Atomic_Server_Client,bclose=1) 
+  Protected *Atomic_Server.Atomic_Server = *client\ServerId  
+  
+  *client\kill = 1 
+  SignalSemaphore(*client\sem) 
+  WaitThread(*client\tid)
+  If *client\done 
+    FreeMutex(*client\lock) 
+    FreeRegularExpression(*client\regex) 
+    If *Atomic_Server\packAddress 
+      CompilerIf #USEEZPACK 
+        *client\pack\Free()
+      CompilerEndIf 
+    EndIf              
+    *Atomic_server\ClientCount - 1 
+    If bclose 
+      CloseNetworkConnection(*client\id)
+    EndIf   
+  EndIf 
+  
+EndProcedure   
 
 Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
   
@@ -488,7 +512,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             EndIf   
           Until (Result <> *Atomic_Server\BufferSize)
           If FindMapElement(clients(),Str(clientid)) 
-            If (result > 0 And MaxRequest < *Atomic_server\BufferSize)  
+            If (MaxRequest > 0 And MaxRequest < *Atomic_server\BufferSize)  
               LockMutex(Clients()\lock) 
               LastElement(Clients()\requests()) 
               AddElement(Clients()\requests())
@@ -499,52 +523,34 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               clients()\timeout = ElapsedMilliseconds() + *Atomic_server\timeout 
               UnlockMutex(clients()\lock)
               SignalSemaphore(Clients()\sem) 
-            ElseIf ElapsedMilliseconds() > clients()\timeout   
-              clients()\kill = 1 
-              SignalSemaphore(Clients()\sem) 
-              If clients()\done 
-                FreeMutex(clients()\lock) 
-                FreeRegularExpression(clients()\regex) 
-                If *Atomic_Server\packAddress 
-                  CompilerIf #USEEZPACK 
-                    clients()\pack\Free()
-                  CompilerEndIf 
-                EndIf              
-                *Atomic_server\ClientCount - 1
-                PrintN("timed out in data shut down" + Str(clients()\ID) + " client count " + Str(*Atomic_server\ClientCount))
+            ElseIf ElapsedMilliseconds() > clients()\timeout  
+                PrintN("closed connection in data shut down timed out" + Str(clients()\ID)) 
+                Atomic_Server_FreeClient(@clients()) 
                 DeleteMapElement(clients())   
-              EndIf
+            ElseIf result = -1 
+                PrintN("closed connection in data, nothing recieved " + Str(clients()\ID) )  
+                Atomic_Server_FreeClient(@clients()) 
+                DeleteMapElement(clients())   
             EndIf 
           Else   
+            PrintN("Data unmapped client " + Str(clientid) + " recived " + Str(result))
             CloseNetworkConnection(clientid)
-            PrintN("Data unmapped " + Str(clientid) + " recived " + Str(result))
+           
           EndIf 
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
           If FindMapElement(clients(),Str(clientID))  
-            clients()\kill = 1
-            SignalSemaphore(Clients()\sem) 
+            PrintN("client Disconnect " + Str(clientid))
+            Atomic_Server_FreeClient(@clients(),0)
+            DeleteMapElement(clients())    
           EndIf
-          PrintN("client Disconnect " + Str(clientid) + " kill sent ")
+          
         Case #PB_NetworkEvent_None 
           ForEach clients() 
-            If clients()\done 
-              FreeMutex(clients()\lock) 
-              FreeRegularExpression(clients()\regex) 
-              If *Atomic_Server\packAddress 
-                CompilerIf #USEEZPACK 
-                  clients()\pack\Free()
-                CompilerEndIf 
-              EndIf              
-              *Atomic_server\ClientCount - 1
-              PrintN("Event None Free client " + Str(clients()\ID) + " client count " + Str(*Atomic_server\ClientCount))
-              DeleteMapElement(clients())   
-            ElseIf ElapsedMilliseconds() > clients()\timeout 
-              Clients()\kill = 1 
-              PrintN("Event None kill Sent " + Str(clients()\id) + " client count " + Str(*Atomic_server\ClientCount))  
-              CloseNetworkConnection(clients()\ID) 
-              SignalSemaphore(Clients()\sem) 
-              WaitThread(clients()\tid) 
+            If ElapsedMilliseconds() > clients()\timeout 
+              PrintN("Event None timmed out client " + Str(clients()\ID) + " " + Str(*Atomic_server\ClientCount))
+              Atomic_Server_FreeClient(@clients(),1) 
+              DeleteMapElement(clients()) 
             EndIf 
           Next 
           Delay(10)
@@ -552,18 +558,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
     Until *Atomic_Server\quit
     CloseNetworkServer(atomicserver)  
     ForEach clients()
-      clients()\kill = 1 
-      SignalSemaphore(Clients()\sem) 
-      WaitThread(clients()\tid) 
-      FreeMutex(clients()\lock) 
-      FreeRegularExpression(clients()\regex) 
-      If *Atomic_Server\packAddress 
-        CompilerIf #USEEZPACK 
-          clients()\pack\Free()
-        CompilerEndIf 
-      EndIf   
-      ClearMap(clients()\Cookies())
-      ClearMap(clients()\ResponseHeaders()) 
+      Atomic_Server_FreeClient(clients(),0) 
       DeleteMapElement(clients()) 
     Next   
     FreeMemory(*buffer)       
@@ -796,7 +791,7 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
     If *request\Type = #ATOMIC_SERVER_HEAD
       *request\status = 100    
       *FileBuffer  = AllocateMemory(8192)
-      *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress) 
+      *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
       fulllen = *BufferOffset - *FileBuffer
       Atomic_Server_send(*request,*FileBuffer,fulllen) 
       FreeMemory(*FileBuffer)
@@ -805,7 +800,7 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
     ElseIf *request\Type = #ATOMIC_SERVER_GET Or *request\Type = #ATOMIC_SERVER_POST  
       
       *FileBuffer   = AllocateMemory(FileLength + 8192)
-      *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress) 
+      *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
       CopyMemory(*data,*BufferOffset,FileLength)
       outpos = 0
       fulllen = *BufferOffset - *FileBuffer + FileLength
@@ -1021,8 +1016,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
         EndIf
         UnlockMutex(*Atomic_Client\lock)
       EndIf
-      
-      
+            
       request.s = URLDecoder(atomic_request\Request)
       type.s = Left(request,4)   
       If FindString(type,"GET",1)
@@ -1034,8 +1028,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
       EndIf 
       
       If atomic_request\type <> 0 
-        
-        
+                
         Atomic_Server_GetRequestHeaders(@atomic_request)
         
         If atomic_request\type  
@@ -1089,7 +1082,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
             If *Atomic_Server\packAddress 
               CompilerIf #USEEZPACK 
                 fn = *Atomic_Client\pack\OpenFile(atomic_request\RequestedFile) 
-              CompilerEndIf 
+               CompilerEndIf 
             Else   
               fn = ReadFile(-1, *Atomic_Server\WWWDirectory + atomic_request\RequestedFile,#PB_UTF8 | #PB_File_SharedRead)
             EndIf 
@@ -1170,11 +1163,11 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
               If atomic_request\type = #ATOMIC_SERVER_HEAD
                 atomic_request\status = 100    
                 *FileBuffer  = AllocateMemory(8192)
-                *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
+                *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress,0)
                 FileLength = 0 
               Else  
                 *FileBuffer   = AllocateMemory(FileLength + 8192)
-                *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
+                *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress,0)
                 CopyMemory(*output,*BufferOffset,FileLength) 
                 FreeMemory(*preprocess)
                 FreeMemory(*output) 
@@ -1234,7 +1227,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
   
 EndProcedure
 
-Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0)
+Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0,bcache=1)
   
   Protected *Atomic_Server.Atomic_Server = *request\Serverid
   Protected *client.Atomic_Server_Client = *request\clientID 
@@ -1265,16 +1258,19 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   Length = PokeS(*FileBuffer, "Last-Modified: " + DayOfWeek + ", " + Day + " " + Month + " " + Year + " " + Time  + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   
-  date+3600 
-  DayOfWeek.s = StringField("Sun, Mon,Tue,Wed,Thu,Fri,Sat", DayOfWeek(Date) + 1, ",")
-  Day = Day(Date)
-  Month.s = StringField("Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec", Month(Date), ",")
-  Year.s = Str(Year(Date))
-  Time.s = FormatDate("%hh:%ii:%ss GMT", Date)
-  Length = PokeS(*FileBuffer, "Expires: " + DayOfWeek + ", " + Day + " " + Month + " " + Year + " " + Time  + #CRLF$, -1, #PB_UTF8)
-  *FileBuffer + Length
-  Length = PokeS(*FileBuffer, "Cache-Control: max-age="+ Str(3600) + #CRLF$, -1, #PB_UTF8)
-  *FileBuffer + Length
+  If (*Atomic_Server\CacheAge And bcache)   
+    date+ *atomic_server\CacheAge  
+    DayOfWeek.s = StringField("Sun, Mon,Tue,Wed,Thu,Fri,Sat", DayOfWeek(Date) + 1, ",")
+    Day = Day(Date)
+    Month.s = StringField("Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec", Month(Date), ",")
+    Year.s = Str(Year(Date))
+    Time.s = FormatDate("%hh:%ii:%ss GMT", Date)
+    Length = PokeS(*FileBuffer, "Expires: " + DayOfWeek + ", " + Day + " " + Month + " " + Year + " " + Time  + #CRLF$, -1, #PB_UTF8)
+    *FileBuffer + Length
+    Length = PokeS(*FileBuffer, "Cache-Control: max-age="+ Str(3600) + #CRLF$, -1, #PB_UTF8)
+    *FileBuffer + Length
+  EndIf   
+  
   Length = PokeS(*FileBuffer, "Server: "+ *Atomic_Server\DomainAlias + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   
