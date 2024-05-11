@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b4
+;Version 3.1.0b5
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -303,82 +303,6 @@ EndEnumeration
 #ATOMIC_SERVER_POST = 2
 #ATOMIC_SERVER_HEAD = 3 
 
-;-Load tests 
-#Loadtest=0 
-CompilerIf #Loadtest <> 0
-  
-  Global semtest = CreateSemaphore() 
-  
-  Procedure _loadLest(amount) 
-    
-    Protected get.s,rec.s,send.s,con,a,try=1  
-    Protected  port = Random(81,80)
-    Protected len,sent,res
-    rec = "Host: 127.0.0.1:" + Str(port) + #CRLF$
-    rec + "Connection: keep-alive" + #CRLF$
-    rec + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0" + #CRLF$
-    rec + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7" + #CRLF$
-    rec + "Sec-Fetch-Site: none" + #CRLF$
-    rec + "Sec-Fetch-Mode: navigate" + #CRLF$
-    rec + "Sec-Fetch-User: ?1" + #CRLF$
-    rec + "Sec-Fetch-Dest: document" + #CRLF$
-    rec + "Accept-Encoding: gzip, deflate, br" + #CRLF$
-    rec + "Accept-Language: en-US,en;q=0.9" + #CRLF$ + #CRLF$
-    
-    WaitSemaphore(semtest) 
-    
-    Repeat
-      con = OpenNetworkConnection("127.0.0.1",port,#PB_Network_TCP | #PB_Network_IPv4,5000)  
-      If con 
-        get = "GET /index.html HTTP/1.1" + #CRLF$ 
-        send = get+rec         
-        SendNetworkString(Con,send)
-        Delay(100)
-        get = "GET /favicon.ico HTTP/1.1" + #CRLF$ 
-        send = get + rec 
-        SendNetworkString(Con,send)
-        Debug "Sent on try " + Str(try) + " " + Str(port)
-        Break 
-      Else 
-        Debug "can't connect retry " + Str(try) 
-        Delay(10) 
-        try+1
-      EndIf 
-    Until try > 5 
-    If try > 5 
-      Debug "couldn't connect" 
-    EndIf 
-    
-  EndProcedure 
-  
-  Procedure loadTest(amount)
-    Protected  a 
-    
-    Dim threads(amount) 
-    
-    For a = 1 To amount
-      threads(a) = CreateThread(@_loadLest(),0) 
-    Next 
-    
-    Delay(1000) 
-    Debug "signal" 
-    
-    For a = 1 To amount 
-      SignalSemaphore(semtest)
-    Next 
-    
-    For a = 1 To amount 
-      If IsThread(threads(a))
-        WaitThread(threads(a),1000)
-      EndIf   
-    Next 
-    
-    Debug "done test" 
-    
-  EndProcedure 
-  
-CompilerEndIf   
-
 Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=1000,*pCBPost=0,*pCBGet=0,CacheAge=0) 
   
   Protected *atomic_server.Atomic_Server 
@@ -446,10 +370,10 @@ EndProcedure
 
 Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
   
-  Protected  ServerEvent, Result, ClientID, MaxRequest 
+  Protected  ServerEvent, Result, ClientID, MaxRequest,pos,*msg
   Protected  *buffer = AllocateMemory(*Atomic_Server\BufferSize+2) 
   Protected  NewMap clients.Atomic_Server_Client(*Atomic_server\maxclients)
-  Protected  atomicserver, key.s, request.s 
+  Protected  atomicserver, key.s, request.s,req.s 
   
   If *Atomic_server\Port <> 443 
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
@@ -513,6 +437,25 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
           Until (Result <> *Atomic_Server\BufferSize)
           If FindMapElement(clients(),Str(clientid)) 
             If (MaxRequest > 0 And MaxRequest < *Atomic_server\BufferSize)  
+              
+              If *Atomic_Server\blog
+                pos = FindString(request,#CRLF$)
+                If (pos > 0 And pos < 128)  
+                  req = Left(request,pos-1)  
+                Else 
+                  req = Left(request,128) + "... "
+                EndIf   
+               
+                If IsWindow(Atomic_Server_Log_window\window)
+                  *msg =  UTF8(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
+                  If *msg 
+                    PostEvent(#ATOMIC_SERVER_EVENT_ADD,Atomic_Server_Log_window\window,0,0,*msg)
+                  EndIf
+                Else 
+                  PrintN(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
+                EndIf
+              EndIf       
+                          
               LockMutex(Clients()\lock) 
               LastElement(Clients()\requests()) 
               AddElement(Clients()\requests())
@@ -540,7 +483,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
           If FindMapElement(clients(),Str(clientID))  
-            PrintN("client Disconnect " + Str(clientid))
+            PrintN("client Disconnect " + Str(clientid) + " " + Str(*Atomic_server\ClientCount))
             Atomic_Server_FreeClient(@clients(),0)
             DeleteMapElement(clients())    
           EndIf
@@ -762,6 +705,7 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     Until ElapsedMilliseconds() > *atomic_client\timeout
     If sendlen > 0
       outpos + sendlen
+      sendlen = 0 
       *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
     Else
       Delay(20) 
@@ -1065,18 +1009,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
           Else     
             atomic_request\RequestedFile = RequestedFile 
           EndIf   
-          If *Atomic_Server\blog
-            LockMutex(*Atomic_Server\mux)
-            If IsWindow(Atomic_Server_Log_window\window)
-              *msg =  UTF8("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
-              If *msg 
-                PostEvent(#ATOMIC_SERVER_EVENT_ADD,Atomic_Server_Log_window\window,0,0,*msg)
-              EndIf
-            Else 
-              PrintN("Client IP " + IPString(GetClientIP(*Atomic_Client\ID)) + " " + type + " " + atomic_request\RequestedFile + " client " + Str(*Atomic_Client\ID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
-            EndIf 
-            UnlockMutex(*Atomic_Server\mux) 
-          EndIf       
+
           If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
             
             If *Atomic_Server\packAddress 
@@ -1281,14 +1214,12 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   Next 
   
   If *client\bSetCookie = 0 
-    LockMutex(*client\lock)
     ForEach *client\Cookies() 
       line = "Set-Cookie: " + MapKey(*client\Cookies()) + "=" + *client\Cookies() +  #CRLF$ 
       Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)
       *FileBuffer + Length
       *client\bSetCookie = 1   
     Next   
-    UnlockMutex(*client\lock) 
   EndIf 
   
   Length = PokeS(*FileBuffer, "Content-Length: " + Str(FileLength) + #CRLF$, -1, #PB_UTF8)
@@ -1505,14 +1436,25 @@ Procedure Atomic_Server_ErrorHandler()
   
   ErrorMessage + #CRLF$
   ErrorMessage + "Register content:" + #CRLF$
-  ErrorMessage + "RAX = " + Str(ErrorRegister(#PB_OnError_RAX)) + #CRLF$
-  ErrorMessage + "RBX = " + Str(ErrorRegister(#PB_OnError_RBX)) + #CRLF$
-  ErrorMessage + "RCX = " + Str(ErrorRegister(#PB_OnError_RCX)) + #CRLF$
-  ErrorMessage + "RDX = " + Str(ErrorRegister(#PB_OnError_RDX)) + #CRLF$
-  ErrorMessage + "RBP = " + Str(ErrorRegister(#PB_OnError_RBP)) + #CRLF$
-  ErrorMessage + "RSI = " + Str(ErrorRegister(#PB_OnError_RSI)) + #CRLF$
-  ErrorMessage + "RDI = " + Str(ErrorRegister(#PB_OnError_RDI)) + #CRLF$
-  ErrorMessage + "RSP = " + Str(ErrorRegister(#PB_OnError_RSP)) + #CRLF$
+  CompilerIf #PB_Compiler_64Bit 
+    ErrorMessage + "RAX = " + Str(ErrorRegister(#PB_OnError_RAX)) + #CRLF$
+    ErrorMessage + "RBX = " + Str(ErrorRegister(#PB_OnError_RBX)) + #CRLF$
+    ErrorMessage + "RCX = " + Str(ErrorRegister(#PB_OnError_RCX)) + #CRLF$
+    ErrorMessage + "RDX = " + Str(ErrorRegister(#PB_OnError_RDX)) + #CRLF$
+    ErrorMessage + "RBP = " + Str(ErrorRegister(#PB_OnError_RBP)) + #CRLF$
+    ErrorMessage + "RSI = " + Str(ErrorRegister(#PB_OnError_RSI)) + #CRLF$
+    ErrorMessage + "RDI = " + Str(ErrorRegister(#PB_OnError_RDI)) + #CRLF$
+    ErrorMessage + "RSP = " + Str(ErrorRegister(#PB_OnError_RSP)) + #CRLF$
+  CompilerElse 
+    ErrorMessage + "EAX = " + Str(ErrorRegister(#PB_OnError_EAX)) + #CRLF$
+    ErrorMessage + "EBX = " + Str(ErrorRegister(#PB_OnError_EBX)) + #CRLF$
+    ErrorMessage + "ECX = " + Str(ErrorRegister(#PB_OnError_ECX)) + #CRLF$
+    ErrorMessage + "EDX = " + Str(ErrorRegister(#PB_OnError_EDX)) + #CRLF$
+    ErrorMessage + "EBP = " + Str(ErrorRegister(#PB_OnError_EBP)) + #CRLF$
+    ErrorMessage + "ESI = " + Str(ErrorRegister(#PB_OnError_ESI)) + #CRLF$
+    ErrorMessage + "EDI = " + Str(ErrorRegister(#PB_OnError_EDI)) + #CRLF$
+    ErrorMessage + "ESP = " + Str(ErrorRegister(#PB_OnError_ESP)) + #CRLF$
+  CompilerEndIf
   
   PrintN(ErrorMessage)
   End
