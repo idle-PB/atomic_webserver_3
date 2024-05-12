@@ -19,6 +19,7 @@ CompilerIf Not #PB_Compiler_Thread
   End 
 CompilerEndIf  
 
+;-Optional includes 
 #USETLS = 1 
 CompilerIf #USETLS 
   XIncludeFile "tls.pbi" 
@@ -33,6 +34,7 @@ CompilerEndIf
 
 UsePNGImageDecoder()
 UsePNGImageEncoder() 
+UseZipPacker() 
 
 CompilerSelect #PB_Compiler_OS ;for compatiblity with 6.04lts mk-soft
   CompilerCase #PB_OS_Windows
@@ -72,6 +74,11 @@ Structure Atomic_Server_Request
   Map parameters.s(64)
 EndStructure   
 
+;-Callback Prototypes 
+Prototype Atomic_Server_pURIHandler(*request.Atomic_Server_Request)
+Prototype Atomic_Server_pPostGet(*request.Atomic_Server_Request) 
+Prototype Atomic_server_pPreprocess(*request.Atomic_Server_Request) 
+
 Structure Atomic_Server_Client 
   ID.i 
   ServerId.i
@@ -88,10 +95,6 @@ Structure Atomic_Server_Client
   Map  ResponseHeaders.s(64) 
   List Requests.Atomic_Server_Request() 
 EndStructure   
-
-Prototype Atomic_Server_pURIHandler(*request.Atomic_Server_Request)
-Prototype Atomic_Server_pPostGet(*request.Atomic_Server_Request) 
-Prototype Atomic_server_pPreprocess(*request.Atomic_Server_Request) 
 
 Structure Atomic_Server_handlers 
   *pt.Atomic_Server_pURIHandler 
@@ -110,7 +113,7 @@ Structure Atomic_server_proxy
   key.s 
   cert.s 
   *request.Atomic_Server_Request 
-EndStructure  
+EndStructure 
 
 Structure Atomic_Server
   Tid.i
@@ -289,11 +292,11 @@ Declare Atomic_Server_Start(Server,window=-1,Blog=0)
 Declare Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
 Declare Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)                                    
 Declare Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileBuffer, FileLength, ContentType.s,Status.i=200,gzip=0,bCache=1)
-Declare Atomic_Server_Resize()
 Declare Atomic_Server_Exit(Server)                                                  
 Declare Atomic_Server_Index(*request.Atomic_Server_Request) 
 Declare Atomic_Server_Error(*request.Atomic_Server_Request) 
 Declare Atomic_Server_Favicon(*request.Atomic_Server_Request)
+Declare.s Atomic_Server_Chr(v.i) 
 
 Enumeration #PB_EventType_FirstCustomValue 
   #ATOMIC_SERVER_EVENT_ADD
@@ -303,48 +306,6 @@ EndEnumeration
 #ATOMIC_SERVER_POST = 2
 #ATOMIC_SERVER_HEAD = 3 
 
-Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=1000,*pCBPost=0,*pCBGet=0,CacheAge=0) 
-  
-  Protected *atomic_server.Atomic_Server 
-  *atomic_server= AllocateStructure(Atomic_Server) 
-  If *atomic_server 
-    *Atomic_Server\Title.s = title 
-    *atomic_server\IP = IP 
-    *atomic_server\IpVer = IPver
-    *atomic_server\DomainAlias = domain 
-    *Atomic_Server\Port = port
-    *Atomic_Server\WWWDirectory.s = wwwDirectory; "www/" 
-    *Atomic_Server\WWWIndex.s = "index.html"
-    *Atomic_Server\WWWError.s = "error.html"
-    *Atomic_Server\maxclients = maxclients
-    *Atomic_Server\BufferSize = 1024*64
-    *Atomic_server\timeout = 10000 
-    *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
-    *Atomic_Server\pCBGet = *pCBGet 
-    *atomic_server\CacheAge = CacheAge 
-    *atomic_server\mux = CreateMutex() 
-    *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
-    
-    If domain = "" 
-      *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
-      *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon()   
-    Else 
-      *Atomic_Server\URIHandlers(domain + "/index")\pt = @*Atomic_Server_Index()
-      *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @*Atomic_Server_favicon() 
-    EndIf 
-    
-    Atomic_Server_Init_MimeTypess(*atomic_server) 
-    ProcedureReturn *atomic_server 
-  EndIf 
-  
-EndProcedure
-
-Procedure Atomic_Server_Init_TLS(server,path.s,CertFile.s,KeyFile.s,CaCertFile.s)
-  Protected *atomic_server.Atomic_Server = server 
-  *atomic_server\CaCertFile = path + CaCertFile  
-  *atomic_server\KeyFile = path + KeyFile 
-  *atomic_server\CertFile = path + CertFile 
-EndProcedure  
 
 Procedure Atomic_Server_FreeClient(*client.Atomic_Server_Client,bclose=1) 
   Protected *Atomic_Server.Atomic_Server = *client\ServerId  
@@ -445,7 +406,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                 Else 
                   req = Left(request,128) + "... "
                 EndIf   
-               
+                LockMutex(*Atomic_server\mux) 
                 If IsWindow(Atomic_Server_Log_window\window)
                   *msg =  UTF8(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
                   If *msg 
@@ -455,7 +416,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                   PrintN(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
                 EndIf
               EndIf       
-                          
+              UnlockMutex(*Atomic_server\mux)             
               LockMutex(Clients()\lock) 
               LastElement(Clients()\requests()) 
               AddElement(Clients()\requests())
@@ -467,18 +428,18 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               UnlockMutex(clients()\lock)
               SignalSemaphore(Clients()\sem) 
             ElseIf ElapsedMilliseconds() > clients()\timeout  
-                PrintN("closed connection in data shut down timed out" + Str(clients()\ID)) 
-                Atomic_Server_FreeClient(@clients()) 
-                DeleteMapElement(clients())   
+              PrintN("closed connection in data shut down timed out" + Str(clients()\ID)) 
+              Atomic_Server_FreeClient(@clients()) 
+              DeleteMapElement(clients())   
             ElseIf result = -1 
-                PrintN("closed connection in data, nothing recieved " + Str(clients()\ID) )  
-                Atomic_Server_FreeClient(@clients()) 
-                DeleteMapElement(clients())   
+              PrintN("closed connection in data, nothing recieved " + Str(clients()\ID) )  
+              Atomic_Server_FreeClient(@clients()) 
+              DeleteMapElement(clients())   
             EndIf 
           Else   
             PrintN("Data unmapped client " + Str(clientid) + " recived " + Str(result))
             CloseNetworkConnection(clientid)
-           
+            
           EndIf 
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
@@ -511,37 +472,6 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
   EndIf
   
 EndProcedure   
-
-Procedure Atomic_Server_Start(server,window=-1,bLog=0)  
-  
-  Protected *atomic_server.Atomic_Server = server     
-  
-  If *atomic_server 
-    *Atomic_Server\bLog = blog 
-    Atomic_Server_Log_window\window = window
-    *Atomic_Server\tid = CreateThread(@Atomic_Server_Thread(),server) 
-    If *Atomic_Server\tid 
-      ProcedureReturn 1
-    Else 
-      MessageRequester(*Atomic_Server\Title, "Error: can't create thread") 
-      FreeStructure(*atomic_server)   
-    EndIf
-  EndIf 
-  
-EndProcedure 
-
-Procedure Atomic_Server_Exit(server)  
-  
-  Protected *atomic_server.Atomic_Server = server 
-  *Atomic_Server\quit = 1
-  If IsThread(*Atomic_Server\tid) 
-    WaitThread(*Atomic_Server\tid) 
-  EndIf 
-  FreeStructure(*Atomic_Server) 
-  
-EndProcedure 
-
-UseZipPacker() 
 
 Procedure Atomic_Server_deflate(*request.Atomic_Server_Request,*input,len) 
   
@@ -960,7 +890,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
         EndIf
         UnlockMutex(*Atomic_Client\lock)
       EndIf
-            
+      
       request.s = URLDecoder(atomic_request\Request)
       type.s = Left(request,4)   
       If FindString(type,"GET",1)
@@ -972,7 +902,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
       EndIf 
       
       If atomic_request\type <> 0 
-                
+        
         Atomic_Server_GetRequestHeaders(@atomic_request)
         
         If atomic_request\type  
@@ -1009,13 +939,13 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
           Else     
             atomic_request\RequestedFile = RequestedFile 
           EndIf   
-
+          
           If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
             
             If *Atomic_Server\packAddress 
               CompilerIf #USEEZPACK 
                 fn = *Atomic_Client\pack\OpenFile(atomic_request\RequestedFile) 
-               CompilerEndIf 
+              CompilerEndIf 
             Else   
               fn = ReadFile(-1, *Atomic_Server\WWWDirectory + atomic_request\RequestedFile,#PB_UTF8 | #PB_File_SharedRead)
             EndIf 
@@ -1237,18 +1167,6 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   
 EndProcedure
 
-Procedure.s Atomic_Server_Chr(v.i) ;return a proper surrogate pair for unicode values outside the BMP (Basic Multilingual Plane)
-  
-  Protected chr.q
-  If v < $10000
-    ProcedureReturn Chr(v)
-  Else
-    chr = (v&$3FF)<<16 | (v-$10000)>>10 | $DC00D800
-    ProcedureReturn PeekS(@chr, 2, #PB_Unicode)
-  EndIf
-  
-EndProcedure
-
 Procedure Atomic_Server_Index(*request.Atomic_Server_Request) 
   
   Protected *Atomic_Server.Atomic_Server = *request\serverid  
@@ -1351,6 +1269,67 @@ Procedure Atomic_Server_Favicon(*request.Atomic_Server_Request)
   
 EndProcedure   
 
+Procedure Atomic_Server_ErrorHandler()
+  Protected ErrorMessage.s
+  
+  ErrorMessage = "Atomic Server program error was detected:" + #CRLF$ 
+  ErrorMessage + #CRLF$
+  ErrorMessage + "Error Message:   " + ErrorMessage()      + #CRLF$
+  ErrorMessage + "Error Code:      " + Str(ErrorCode())    + #CRLF$  
+  ErrorMessage + "Code Address:    " + Str(ErrorAddress()) + #CRLF$
+  
+  If ErrorCode() = #PB_OnError_InvalidMemory   
+    ErrorMessage + "Target Address:  " + Str(ErrorTargetAddress()) + #CRLF$
+  EndIf
+  
+  If ErrorLine() = -1
+    ErrorMessage + "Sourcecode line: Enable OnError lines support to get code line information." + #CRLF$
+  Else
+    ErrorMessage + "Sourcecode line: " + Str(ErrorLine()) + #CRLF$
+    ErrorMessage + "Sourcecode file: " + ErrorFile() + #CRLF$
+  EndIf
+  
+  ErrorMessage + #CRLF$
+  ErrorMessage + "Register content:" + #CRLF$
+  CompilerIf #PB_Compiler_64Bit 
+    ErrorMessage + "RAX = " + Str(ErrorRegister(#PB_OnError_RAX)) + #CRLF$
+    ErrorMessage + "RBX = " + Str(ErrorRegister(#PB_OnError_RBX)) + #CRLF$
+    ErrorMessage + "RCX = " + Str(ErrorRegister(#PB_OnError_RCX)) + #CRLF$
+    ErrorMessage + "RDX = " + Str(ErrorRegister(#PB_OnError_RDX)) + #CRLF$
+    ErrorMessage + "RBP = " + Str(ErrorRegister(#PB_OnError_RBP)) + #CRLF$
+    ErrorMessage + "RSI = " + Str(ErrorRegister(#PB_OnError_RSI)) + #CRLF$
+    ErrorMessage + "RDI = " + Str(ErrorRegister(#PB_OnError_RDI)) + #CRLF$
+    ErrorMessage + "RSP = " + Str(ErrorRegister(#PB_OnError_RSP)) + #CRLF$
+  CompilerElse 
+    ErrorMessage + "EAX = " + Str(ErrorRegister(#PB_OnError_EAX)) + #CRLF$
+    ErrorMessage + "EBX = " + Str(ErrorRegister(#PB_OnError_EBX)) + #CRLF$
+    ErrorMessage + "ECX = " + Str(ErrorRegister(#PB_OnError_ECX)) + #CRLF$
+    ErrorMessage + "EDX = " + Str(ErrorRegister(#PB_OnError_EDX)) + #CRLF$
+    ErrorMessage + "EBP = " + Str(ErrorRegister(#PB_OnError_EBP)) + #CRLF$
+    ErrorMessage + "ESI = " + Str(ErrorRegister(#PB_OnError_ESI)) + #CRLF$
+    ErrorMessage + "EDI = " + Str(ErrorRegister(#PB_OnError_EDI)) + #CRLF$
+    ErrorMessage + "ESP = " + Str(ErrorRegister(#PB_OnError_ESP)) + #CRLF$
+  CompilerEndIf
+  
+  PrintN(ErrorMessage)
+  End
+  
+EndProcedure
+
+;-Public fumctions 
+
+Procedure.s Atomic_Server_Chr(v.i) ;return a proper surrogate pair for unicode values outside the BMP (Basic Multilingual Plane)
+  
+  Protected chr.q
+  If v < $10000
+    ProcedureReturn Chr(v)
+  Else
+    chr = (v&$3FF)<<16 | (v-$10000)>>10 | $DC00D800
+    ProcedureReturn PeekS(@chr, 2, #PB_Unicode)
+  EndIf
+  
+EndProcedure
+
 Procedure Atomic_Server_Add_Handler(server,uri.s,*pcbhandler) 
   
   Protected *Atomic_Server.Atomic_Server = server 
@@ -1414,49 +1393,74 @@ Procedure Atomic_Server_ReadFile(*Atomic_Client.Atomic_Server_Client,file.s)
   
 EndProcedure  
 
-Procedure Atomic_Server_ErrorHandler()
-  Protected ErrorMessage.s
+Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s="",port=80,IpVer=#PB_Network_IPv4,maxclients=1000,*pCBPost=0,*pCBGet=0,CacheAge=0) 
   
-  ErrorMessage = "Atomic Server program error was detected:" + #CRLF$ 
-  ErrorMessage + #CRLF$
-  ErrorMessage + "Error Message:   " + ErrorMessage()      + #CRLF$
-  ErrorMessage + "Error Code:      " + Str(ErrorCode())    + #CRLF$  
-  ErrorMessage + "Code Address:    " + Str(ErrorAddress()) + #CRLF$
-  
-  If ErrorCode() = #PB_OnError_InvalidMemory   
-    ErrorMessage + "Target Address:  " + Str(ErrorTargetAddress()) + #CRLF$
-  EndIf
-  
-  If ErrorLine() = -1
-    ErrorMessage + "Sourcecode line: Enable OnError lines support to get code line information." + #CRLF$
-  Else
-    ErrorMessage + "Sourcecode line: " + Str(ErrorLine()) + #CRLF$
-    ErrorMessage + "Sourcecode file: " + ErrorFile() + #CRLF$
-  EndIf
-  
-  ErrorMessage + #CRLF$
-  ErrorMessage + "Register content:" + #CRLF$
-  CompilerIf #PB_Compiler_64Bit 
-    ErrorMessage + "RAX = " + Str(ErrorRegister(#PB_OnError_RAX)) + #CRLF$
-    ErrorMessage + "RBX = " + Str(ErrorRegister(#PB_OnError_RBX)) + #CRLF$
-    ErrorMessage + "RCX = " + Str(ErrorRegister(#PB_OnError_RCX)) + #CRLF$
-    ErrorMessage + "RDX = " + Str(ErrorRegister(#PB_OnError_RDX)) + #CRLF$
-    ErrorMessage + "RBP = " + Str(ErrorRegister(#PB_OnError_RBP)) + #CRLF$
-    ErrorMessage + "RSI = " + Str(ErrorRegister(#PB_OnError_RSI)) + #CRLF$
-    ErrorMessage + "RDI = " + Str(ErrorRegister(#PB_OnError_RDI)) + #CRLF$
-    ErrorMessage + "RSP = " + Str(ErrorRegister(#PB_OnError_RSP)) + #CRLF$
-  CompilerElse 
-    ErrorMessage + "EAX = " + Str(ErrorRegister(#PB_OnError_EAX)) + #CRLF$
-    ErrorMessage + "EBX = " + Str(ErrorRegister(#PB_OnError_EBX)) + #CRLF$
-    ErrorMessage + "ECX = " + Str(ErrorRegister(#PB_OnError_ECX)) + #CRLF$
-    ErrorMessage + "EDX = " + Str(ErrorRegister(#PB_OnError_EDX)) + #CRLF$
-    ErrorMessage + "EBP = " + Str(ErrorRegister(#PB_OnError_EBP)) + #CRLF$
-    ErrorMessage + "ESI = " + Str(ErrorRegister(#PB_OnError_ESI)) + #CRLF$
-    ErrorMessage + "EDI = " + Str(ErrorRegister(#PB_OnError_EDI)) + #CRLF$
-    ErrorMessage + "ESP = " + Str(ErrorRegister(#PB_OnError_ESP)) + #CRLF$
-  CompilerEndIf
-  
-  PrintN(ErrorMessage)
-  End
+  Protected *atomic_server.Atomic_Server 
+  *atomic_server= AllocateStructure(Atomic_Server) 
+  If *atomic_server 
+    *Atomic_Server\Title.s = title 
+    *atomic_server\IP = IP 
+    *atomic_server\IpVer = IPver
+    *atomic_server\DomainAlias = domain 
+    *Atomic_Server\Port = port
+    *Atomic_Server\WWWDirectory.s = wwwDirectory; "www/" 
+    *Atomic_Server\WWWIndex.s = "index.html"
+    *Atomic_Server\WWWError.s = "error.html"
+    *Atomic_Server\maxclients = maxclients
+    *Atomic_Server\BufferSize = 65536
+    *Atomic_server\timeout = 10000 
+    *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
+    *Atomic_Server\pCBGet = *pCBGet 
+    *atomic_server\CacheAge = CacheAge 
+    *atomic_server\mux = CreateMutex() 
+    *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
+    
+    If domain = "" 
+      *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
+      *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon()   
+    Else 
+      *Atomic_Server\URIHandlers(domain + "/index")\pt = @*Atomic_Server_Index()
+      *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @*Atomic_Server_favicon() 
+    EndIf 
+    
+    Atomic_Server_Init_MimeTypess(*atomic_server) 
+    ProcedureReturn *atomic_server 
+  EndIf 
   
 EndProcedure
+
+Procedure Atomic_Server_Init_TLS(server,path.s,CertFile.s,KeyFile.s,CaCertFile.s)
+  Protected *atomic_server.Atomic_Server = server 
+  *atomic_server\CaCertFile = path + CaCertFile  
+  *atomic_server\KeyFile = path + KeyFile 
+  *atomic_server\CertFile = path + CertFile 
+EndProcedure  
+
+Procedure Atomic_Server_Start(server,window=-1,bLog=0)  
+  
+  Protected *atomic_server.Atomic_Server = server     
+  
+  If *atomic_server 
+    *Atomic_Server\bLog = blog 
+    Atomic_Server_Log_window\window = window
+    *Atomic_Server\tid = CreateThread(@Atomic_Server_Thread(),server) 
+    If *Atomic_Server\tid 
+      ProcedureReturn 1
+    Else 
+      MessageRequester(*Atomic_Server\Title, "Error: can't create thread") 
+      FreeStructure(*atomic_server)   
+    EndIf
+  EndIf 
+  
+EndProcedure 
+
+Procedure Atomic_Server_Exit(server)  
+  
+  Protected *atomic_server.Atomic_Server = server 
+  *Atomic_Server\quit = 1
+  If IsThread(*Atomic_Server\tid) 
+    WaitThread(*Atomic_Server\tid) 
+  EndIf 
+  FreeStructure(*Atomic_Server) 
+  
+EndProcedure 
