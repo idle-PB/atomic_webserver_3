@@ -689,19 +689,45 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   
 EndProcedure  
 
-Procedure Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s)  ;set a client cookie 
+Procedure Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s,maxage.l=0,brandom=0)  ;set a client cookie 
   
   Protected *client.Atomic_Server_Client = *request\clientID   
+  Protected *data = AllocateMemory(32)  
+  
+  If brandom 
+    CryptRandomData(*data,32)
+    value = Fingerprint(*data,32,#PB_Cipher_SHA2,256)
+    FreeMemory(*data)
+  EndIf   
   
   LockMutex(*client\lock) 
   If FindMapElement(*client\Cookies(),cookie) 
-    *client\Cookies() = value  
+    If maxage = 0
+      *client\Cookies() = value  
+    Else 
+      *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
+    EndIf   
   Else 
     AddMapElement(*client\Cookies(),cookie) 
-    *client\Cookies() = value   
+    If maxage = 0
+      *client\Cookies() = value  
+    Else 
+      *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
+    EndIf
   EndIf   
   UnlockMutex(*client\lock) 
   
+EndProcedure 
+
+Procedure Atomic_Server_DeleteCookie(*request.Atomic_Server_Request,Cookie.s)
+  
+   Protected *client.Atomic_Server_Client = *request\clientID   
+   LockMutex(*client\lock) 
+   If FindMapElement(*client\Cookies(),cookie) 
+      *client\Cookies() = "0; Max-Age=0" 
+   EndIf   
+   UnlockMutex(*client\lock)  
+   
 EndProcedure   
 
 Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal function retrives cookies 
