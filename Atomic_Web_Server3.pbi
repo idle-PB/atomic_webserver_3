@@ -35,6 +35,7 @@ CompilerEndIf
 UsePNGImageDecoder()
 UsePNGImageEncoder() 
 UseZipPacker() 
+UseSHA2Fingerprint()
 
 CompilerSelect #PB_Compiler_OS ;for compatiblity with 6.04lts mk-soft
   CompilerCase #PB_OS_Windows
@@ -689,54 +690,6 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   
 EndProcedure  
 
-UseSHA2Fingerprint()
-
-
-Procedure.s Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s,maxage.l=0,brandom=0)  ;set a client cookie 
-  
-  Protected *client.Atomic_Server_Client = *request\clientID   
-  Protected *data = AllocateMemory(32)  
-  
-  If brandom 
-    OpenCryptRandom()
-    CryptRandomData(*data,32)
-    CloseCryptRandom() 
-    value = Fingerprint(*data,32,#PB_Cipher_SHA2,256)
-    FreeMemory(*data)
-  EndIf   
-  
-  LockMutex(*client\lock) 
-  If FindMapElement(*client\Cookies(),cookie) 
-    If maxage = 0
-      *client\Cookies() = value  
-    Else 
-      *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
-    EndIf   
-  Else 
-    AddMapElement(*client\Cookies(),cookie) 
-    If maxage = 0
-      *client\Cookies() = value  
-    Else 
-      *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
-    EndIf
-  EndIf   
-  UnlockMutex(*client\lock) 
-  
-  ProcedureReturn value 
-  
-EndProcedure 
-
-Procedure Atomic_Server_DeleteCookie(*request.Atomic_Server_Request,Cookie.s)
-  
-   Protected *client.Atomic_Server_Client = *request\clientID   
-   LockMutex(*client\lock) 
-   If FindMapElement(*client\Cookies(),cookie) 
-      *client\Cookies() = "0; Max-Age=0" 
-   EndIf   
-   UnlockMutex(*client\lock)  
-   
-EndProcedure   
-
 Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal function retrives cookies 
   
   Protected *client.Atomic_Server_Client = *request\clientID   
@@ -1362,6 +1315,51 @@ Procedure.s Atomic_Server_Chr(v.i) ;return a proper surrogate pair for unicode v
   EndIf
   
 EndProcedure
+
+Procedure.s Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s,maxage.l=0,brandom=0)  ;set a client cookie 
+  
+  Protected *client.Atomic_Server_Client = *request\clientID   
+  Protected *data = AllocateMemory(32)  
+  
+  If brandom 
+    OpenCryptRandom()
+    CryptRandomData(*data,32)
+    CloseCryptRandom() 
+    value = Fingerprint(*data,32,#PB_Cipher_SHA2,256)
+    FreeMemory(*data)
+  EndIf   
+  
+  LockMutex(*client\lock) 
+  If FindMapElement(*client\Cookies(),cookie) 
+    If maxage = 0
+      *client\Cookies() = value  
+    Else 
+      *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
+    EndIf   
+  Else 
+    AddMapElement(*client\Cookies(),cookie) 
+    If maxage = 0
+      *client\Cookies() = value  
+    Else 
+      *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
+    EndIf
+  EndIf   
+  UnlockMutex(*client\lock) 
+  
+  ProcedureReturn value 
+  
+EndProcedure 
+
+Procedure Atomic_Server_DeleteCookie(*request.Atomic_Server_Request,Cookie.s)
+  
+   Protected *client.Atomic_Server_Client = *request\clientID   
+   LockMutex(*client\lock) 
+   If FindMapElement(*client\Cookies(),cookie) 
+      *client\Cookies() = "0; Max-Age=0" 
+   EndIf   
+   UnlockMutex(*client\lock)  
+   
+EndProcedure   
 
 Procedure Atomic_Server_Add_Handler(server,uri.s,*pcbhandler) 
   
