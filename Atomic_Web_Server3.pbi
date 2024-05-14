@@ -689,13 +689,18 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   
 EndProcedure  
 
-Procedure Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s,maxage.l=0,brandom=0)  ;set a client cookie 
+UseSHA2Fingerprint()
+
+
+Procedure.s Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.s,maxage.l=0,brandom=0)  ;set a client cookie 
   
   Protected *client.Atomic_Server_Client = *request\clientID   
   Protected *data = AllocateMemory(32)  
   
   If brandom 
+    OpenCryptRandom()
     CryptRandomData(*data,32)
+    CloseCryptRandom() 
     value = Fingerprint(*data,32,#PB_Cipher_SHA2,256)
     FreeMemory(*data)
   EndIf   
@@ -716,6 +721,8 @@ Procedure Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,value.
     EndIf
   EndIf   
   UnlockMutex(*client\lock) 
+  
+  ProcedureReturn value 
   
 EndProcedure 
 
