@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b5
+;Version 3.1.0b6
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -134,6 +134,7 @@ Structure Atomic_Server
   maxclients.i
   ClientCount.i
   BufferSize.i
+  UploadSize.i
   DomainAlias.s
   packAddress.i
   packsize.i
@@ -332,10 +333,11 @@ EndProcedure
 
 Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server) 
   
-  Protected  ServerEvent, Result, ClientID, MaxRequest,pos,*msg
-  Protected  *buffer = AllocateMemory(*Atomic_Server\BufferSize+2) 
+  Protected  ServerEvent, Result, ClientID, MaxRequest,pos,epos,*msg
+  Protected  *buffer 
   Protected  NewMap clients.Atomic_Server_Client(*Atomic_server\maxclients)
-  Protected  atomicserver, key.s, request.s,req.s 
+  Protected  atomicserver, key.s, request.s,req.s,*err,timeout  
+  Protected  head.s, ContentLen,len
   
   If *Atomic_server\Port <> 443 
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
@@ -383,23 +385,47 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
         Case #PB_NetworkEvent_Data 
           MaxRequest = 0 
           request.s = "" 
-          ClientID = EventClient()         
-          Repeat
-            FillMemory(*buffer,*Atomic_Server\BufferSize+2,0,#PB_Byte)
-            Result = ReceiveNetworkData(ClientID, *Buffer, *Atomic_Server\BufferSize)
-            If result > 0 
-              Request + PeekS(*Buffer, Result, #PB_UTF8 | #PB_ByteLength)
-              MaxRequest + result
-              If MaxRequest > *Atomic_server\BufferSize
-                Break 
-              EndIf   
+          ClientID = EventClient()  
+          timeout = ElapsedMilliseconds() + 1000
+          *buffer = AllocateMemory(*atomic_server\BufferSize) 
+          Result = ReceiveNetworkData(ClientID, *Buffer, *atomic_server\BufferSize)
+          If Result <> - 1  
+            If result > 500 
+              len = 500 
             Else 
-              Delay(0) 
+              len = result 
             EndIf   
-          Until (Result <> *Atomic_Server\BufferSize)
+            head = URLDecoder(PeekS(*buffer,len,#PB_UTF8 | #PB_ByteLength)) 
+            pos = FindString(head,"Content-Length: ") 
+            If pos 
+              epos = FindString(head,#CRLF$,pos) 
+              ContentLen = Val(Mid(head,pos+16,epos-(pos+16)))-pos 
+            Else 
+              ContentLen=0
+            EndIf 
+            MaxRequest + result 
+            If result = *atomic_server\BufferSize
+              Repeat 
+                *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
+                Result = ReceiveNetworkData(CLientid,*Buffer+MaxRequest,*atomic_server\BufferSize)
+                If result <> -1   
+                  MaxRequest + result
+                  timeout = ElapsedMilliseconds() + 1000 
+                ElseIf ElapsedMilliseconds() > timeout  
+                  PrintN("receive Data time out") 
+                  Break 
+                Else   
+                  Delay(1) 
+                EndIf
+              Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
+            EndIf 
+          EndIf  
+          If (MaxRequest > 0 And MaxRequest < *Atomic_server\UploadSize)  
+            Request = PeekS(*Buffer, MaxRequest, #PB_UTF8)
+          EndIf 
+          FreeMemory(*buffer)
           If FindMapElement(clients(),Str(clientid)) 
-            If (MaxRequest > 0 And MaxRequest < *Atomic_server\BufferSize)  
-              
+            If request <> "" 
               If *Atomic_Server\blog
                 pos = FindString(request,#CRLF$)
                 If (pos > 0 And pos < 128)  
@@ -466,10 +492,10 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
       Atomic_Server_FreeClient(clients(),0) 
       DeleteMapElement(clients()) 
     Next   
-    FreeMemory(*buffer)       
+    ;FreeMemory(*buffer)       
   Else
     MessageRequester(*Atomic_Server\Title, "Error: can't create the server (port " + *Atomic_Server\port + " in use ?)") 
-    FreeMemory(*buffer)  
+    ;FreeMemory(*buffer)  
   EndIf
   
 EndProcedure   
@@ -812,42 +838,68 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
   Protected *Atomic_Server.Atomic_Server = *request\serverid 
   Protected *Atomic_Client.Atomic_Server_Client = *request\clientID 
   Protected Timeout = ElapsedMilliseconds() + 5000 
-  Protected *buffer  
-  Protected result,con,sendlen,success 
+  Protected *buffer ,pos,epos,head.s,ContentLen,MaxRequest 
+  Protected result,con,sendlen,success,len 
   
   LockMutex(*atomic_client\lock) 
   If FindMapElement(*Atomic_Server\proxy(),*request\host) 
-    *buffer = AllocateMemory(*Atomic_Server\BufferSize+2) 
+    
     *Atomic_Client\timeout = ElapsedMilliseconds() + 5000 
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
       Debug "start proxy request"
       If SendNetworkString(con,*request\Request,#PB_UTF8) 
         Repeat
-          Delay(2)
+          Delay(1)
         Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data And ElapsedMilliseconds() < Timeout)
         Debug "proxy recive / send "
-        Repeat
-          FillMemory(*buffer,*Atomic_Server\BufferSize+2,0,#PB_Byte)
-          Result = ReceiveNetworkData(con, *Buffer, *Atomic_Server\BufferSize)
-          If result <> -1 
-            Atomic_Server_Send(*request,*buffer,result,0) 
-            *Atomic_Client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout
+        timeout = ElapsedMilliseconds() + 1000
+        *buffer = AllocateMemory(*atomic_server\BufferSize) 
+        Result = ReceiveNetworkData(con, *Buffer, *atomic_server\BufferSize)
+        If Result <> - 1  
+          If result > 500 
+            len = 500 
           Else 
-            Debug "proxy would block"
-            Delay(10) 
+            len = result 
           EndIf   
-        Until Result <> *Atomic_Server\BufferSize
-        success = 1 
-      EndIf 
-      CloseNetworkConnection(con)   
-    Else 
-      Debug "failed to open connection" 
-    EndIf  
-    FreeMemory(*buffer) 
-  EndIf 
-  UnlockMutex(*atomic_client\lock) 
-  ProcedureReturn success 
+          head = URLDecoder(PeekS(*buffer,len,#PB_UTF8 | #PB_ByteLength)) 
+          pos = FindString(head,"Content-Length: ") 
+          If pos 
+            epos = FindString(head,#CRLF$,pos) 
+            ContentLen = Val(Mid(head,pos+16,epos-(pos+16)))-pos 
+          Else 
+            ContentLen=0
+          EndIf 
+          MaxRequest + result 
+          If result = *atomic_server\BufferSize 
+            Repeat 
+              *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
+              Result = ReceiveNetworkData(con,*Buffer+MaxRequest,*atomic_server\BufferSize)
+              If result <> -1   
+                MaxRequest + result
+                timeout = ElapsedMilliseconds() + 1000 
+              ElseIf ElapsedMilliseconds() > timeout  
+                Break 
+              Else   
+                Delay(1) 
+              EndIf
+            Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
+          EndIf   
+        EndIf  
+        If MaxRequest > 0     
+          Atomic_Server_Send(*request,*buffer,MaxRequest,0) 
+          *Atomic_Client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout
+          success = 1 
+        EndIf 
+        CloseNetworkConnection(con) 
+       EndIf 
+     Else 
+        Debug "failed to open connection" 
+      EndIf  
+      FreeMemory(*buffer) 
+    EndIf 
+    UnlockMutex(*atomic_client\lock) 
+    ProcedureReturn success 
   
 EndProcedure   
 
@@ -1098,6 +1150,8 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
       state = "200 OK"
     Case 404 
       state = "404 Not Found"
+    Case 414
+      state = "414 URI Too Long" 
   EndSelect    
   
   Length = PokeS(*FileBuffer, "HTTP/1.1 " + state + #CRLF$, -1, #PB_UTF8)                                                             
@@ -1439,6 +1493,7 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_Server\WWWError.s = "error.html"
     *Atomic_Server\maxclients = maxclients
     *Atomic_Server\BufferSize = 65536
+    *atomic_server\UploadSize = 10*1024*1024
     *Atomic_server\timeout = 10000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
