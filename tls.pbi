@@ -264,7 +264,7 @@ Procedure __MyInit()
     CompilerSelect #PB_Compiler_OS
       CompilerCase #PB_OS_Windows
         CompilerIf #PB_Compiler_64Bit
-          TLSG\DLL = OpenLibrary(#PB_Any, "tls-24.dll")
+          TLSG\DLL = OpenLibrary(#PB_Any, "libtls-24.dll")
         CompilerElse 
           TLSG\DLL = OpenLibrary(#PB_Any, "tls.dll")
         CompilerEndIf  
