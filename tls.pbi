@@ -1,4 +1,4 @@
-﻿;V 1.00
+﻿;V 1.01b
 ;author Hexor,infratec,idle
 ;* $OpenBSD: tls.h,v 1.58 2020/01/22 06:44:02 beck Exp $ */
 ;*
@@ -264,9 +264,9 @@ Procedure __MyInit()
     CompilerSelect #PB_Compiler_OS
       CompilerCase #PB_OS_Windows
         CompilerIf #PB_Compiler_64Bit
-          TLSG\DLL = OpenLibrary(#PB_Any, "libtls-24.dll")
+          TLSG\DLL = OpenLibrary(#PB_Any, "tls-24.dll")
         CompilerElse 
-          TLSG\DLL = OpenLibrary(#PB_Any, "libtlsx86-24.dll")
+          TLSG\DLL = OpenLibrary(#PB_Any, "tls.dll")
         CompilerEndIf  
         ;error? get it from https://www.purebasic.fr/english/viewtopic.php?p=593079#p593079
       CompilerDefault
@@ -370,7 +370,7 @@ Procedure __MyInit()
   ProcedureReturn TLSG\DLL
 EndProcedure
 
-Enumeration TLS_Errors
+Enumeration TLS_Errors 1
   #TLS_Error_None
   #TLS_Error_InitFailed
   #TLS_Error_NewConfig_Failed
@@ -434,17 +434,21 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
         EndIf
         tls_config_free(*cfg)
         Mode     = Mode & ($FFFFFFFF - #PB_Network_Extra)
-        ServerID = CreateNetworkServer(Server, Port, Mode, BindedIP)
+        ServerID = CreateNetworkServer(Server, Port, #PB_Network_TCP | #PB_Network_IPv4, BindedIP)
         If ServerID
-          If tls_connect_socket(*ctx, ServerID(ServerID),TLSG\domain$) = -1
+          Protected iocontext   
+          If tls_accept_socket(*ctx,@iocontext,ServerID(ServerID)) = -1
             TLSG\LastError = #TLS_Error_Cant_Connect_Socket
+            PrintN("#TLS_Error_Cant_Connect_Socket") 
+            *error = tls_error(*ctx) 
+            PrintN("error " + PeekS(*Error, - 1, #PB_UTF8)) 
           Else
             LockMutex(TLSG\muxSever) 
             AddMapElement(TLSG\Servers(), Str(ServerID(ServerID)))
             TLSG\Servers()\ctx = *ctx
             UnlockMutex(TLSG\muxSever) 
           EndIf
-        EndIf
+         EndIf
       EndIf
     EndIf
   Else
@@ -666,11 +670,13 @@ Procedure TLS_CloseNetworkConnection(ClientID)
   *client = FindMapElement(TLSG\Clients(), key)
   If *client   
     ;is TLS connection!
-    CloseNetworkConnection(ClientID)
+    ;CloseNetworkConnection(ClientID)
     If *client\ctx 
       tls_close(*client\ctx)
       tls_free(*client\ctx)
-    EndIf 
+    EndIf
+     CloseNetworkConnection(ClientID)
+    
     DeleteMapElement(TLSG\Clients(),key)
   Else
     CloseNetworkConnection(ClientID)
@@ -685,12 +691,12 @@ Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")
   ;the library will call tls_init() internally already when needed
   ;but you can call it as often as you want (to use different certificates right before a connection e.g.)
   Protected Result
-  If tls_init() = #TLS_Error_None
+  If tls_init() = 0; TLS_Error_None
     TLSG\domain$     = Domain$ 
     TLSG\CertFile$   = CertFile$
     TLSG\KeyFile$    = KeyFile$
     TLSG\CaCertFile$ = CaCertFile$
-    Result           = #True
+    Result           = #TLS_Error_None
   Else
     Result = #TLS_Error_InitFailed
   EndIf

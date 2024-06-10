@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b6
+;Version 3.1.0b7
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -389,7 +389,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
           timeout = ElapsedMilliseconds() + 1000
           *buffer = AllocateMemory(*atomic_server\BufferSize) 
           Result = ReceiveNetworkData(ClientID, *Buffer, *atomic_server\BufferSize)
-          If Result <> - 1  
+          If Result > - 1  
             If result > 500 
               len = 500 
             Else 
@@ -404,11 +404,11 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               ContentLen=0
             EndIf 
             MaxRequest + result 
-            If result = *atomic_server\BufferSize
+            If ContentLen > 0 
               Repeat 
                 *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
                 Result = ReceiveNetworkData(CLientid,*Buffer+MaxRequest,*atomic_server\BufferSize)
-                If result <> -1   
+                If result > -1   
                   MaxRequest + result
                   timeout = ElapsedMilliseconds() + 1000 
                 ElseIf ElapsedMilliseconds() > timeout  
@@ -871,7 +871,7 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
             ContentLen=0
           EndIf 
           MaxRequest + result 
-          If result = *atomic_server\BufferSize 
+          If ContentLen > 0  
             Repeat 
               *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
               Result = ReceiveNetworkData(con,*Buffer+MaxRequest,*atomic_server\BufferSize)

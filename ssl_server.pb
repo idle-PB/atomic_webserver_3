@@ -9,7 +9,7 @@ Global event,server1,title.s = "atomic_webserver 3"
 
 server1 = Atomic_Server_Init(title,"./www/",#Server_IP,"atomicwebserver.com",443)  
 Atomic_Server_Init_TLS(server1,"./certs/atomicwebserver.com/","certificate.crt","private.key","ca_bundle.crt")   
-
+OpenConsole()
 If OpenWindow(1, 0, 0, 800, 600, title, #PB_Window_SystemMenu | #PB_Window_SizeGadget)
   
   EditorGadget(0, 0, 0, 800, 560, #PB_Editor_ReadOnly)
@@ -25,7 +25,7 @@ If OpenWindow(1, 0, 0, 800, 600, title, #PB_Window_SystemMenu | #PB_Window_SizeG
         FreeMemory(EventData()) ;<-----IMPORTANT you must free the EventData or it will leak memory.                                 
       Case #PB_Event_Timer 
         If EventTimer() = 2 
-          updateDNS()
+         ; updateDNS()
         EndIf   
       Case #PB_Event_CloseWindow
         Break 
@@ -35,4 +35,4 @@ If OpenWindow(1, 0, 0, 800, 600, title, #PB_Window_SystemMenu | #PB_Window_SizeG
   Atomic_Server_Exit(server1)
    
 EndIf
-
+CloseConsole()
