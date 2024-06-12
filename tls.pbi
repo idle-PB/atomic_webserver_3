@@ -1,4 +1,4 @@
-﻿;V 1.01b
+﻿;V 1.0.2b
 ;author Hexor,infratec,idle
 ;* $OpenBSD: tls.h,v 1.58 2020/01/22 06:44:02 beck Exp $ */
 ;*
@@ -40,10 +40,7 @@
 ;|   In case of a server, you would need to call Init_TLS() also most likely.
 ;|   Because with that procedure you can set the needed TLS certificates (cert and key file typically)
 ;|
-;|   REMARK:
-;|   SERVER FUNCTIONALITY NOT TESTED!!
-;|
-;/============
+;|   ;/============
 
 #TLS_API = 20200120
 
@@ -263,16 +260,14 @@ Procedure __MyInit()
   CompilerElse
     CompilerSelect #PB_Compiler_OS
       CompilerCase #PB_OS_Windows
-        CompilerIf #PB_Compiler_64Bit
-          TLSG\DLL = OpenLibrary(#PB_Any, "libtls-24.dll")
-        CompilerElse 
+        CompilerIf #PB_Compiler_32Bit
           TLSG\DLL = OpenLibrary(#PB_Any, "tls.dll")
-        CompilerEndIf  
-        ;error? get it from https://www.purebasic.fr/english/viewtopic.php?p=593079#p593079
+        CompilerElse 
+          TLSG\DLL = OpenLibrary(#PB_Any, "tlsx64.dll")
+        CompilerEndIf   
       CompilerDefault
         TLSG\DLL = OpenLibrary(#PB_Any, "./libtls.so.25.0.0")
-        ;error? get it from https://www.purebasic.fr/english/viewtopic.php?p=593079#p593079
-    CompilerEndSelect
+     CompilerEndSelect
   CompilerEndIf
   
   If TLSG\DLL
@@ -370,9 +365,9 @@ Procedure __MyInit()
   ProcedureReturn TLSG\DLL
 EndProcedure
 
-Enumeration TLS_Errors 1
-  #TLS_Error_None
+Enumeration TLS_Errors 
   #TLS_Error_InitFailed
+  #TLS_Error_None
   #TLS_Error_NewConfig_Failed
   #TLS_Error_CantLoad_CertFile
   #TLS_Error_CantLoad_KeyFile
@@ -470,7 +465,7 @@ Procedure TLS_NetworkServerEvent(ServerID)
       Server = ServerID(Server)
       LockMutex(TLSG\muxSever)
       *server = FindMapElement(TLSG\Servers(), Str(Server))
-      ;UnlockMutex(TLSG\muxSever)
+      
       If *server 
         ;TLS!
         ClientID = EventClient()
@@ -669,13 +664,12 @@ Procedure TLS_CloseNetworkConnection(ClientID)
   
   *client = FindMapElement(TLSG\Clients(), key)
   If *client   
-    ;is TLS connection!
-    ;CloseNetworkConnection(ClientID)
+    
     If *client\ctx 
       tls_close(*client\ctx)
       tls_free(*client\ctx)
     EndIf
-     CloseNetworkConnection(ClientID)
+    CloseNetworkConnection(ClientID)
     
     DeleteMapElement(TLSG\Clients(),key)
   Else
@@ -690,18 +684,18 @@ Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")
   ;Only needed, when you have certificates.
   ;the library will call tls_init() internally already when needed
   ;but you can call it as often as you want (to use different certificates right before a connection e.g.)
-  Protected Result
-  If tls_init() = 0; TLS_Error_None
-    TLSG\domain$     = Domain$ 
-    TLSG\CertFile$   = CertFile$
-    TLSG\KeyFile$    = KeyFile$
-    TLSG\CaCertFile$ = CaCertFile$
-    Result           = #TLS_Error_None
-  Else
-    Result = #TLS_Error_InitFailed
-  EndIf
-  
+  Protected Result = #TLS_Error_InitFailed
+  If tlsg\DLL 
+    If tls_init() = 0  ; TLS_Error_None
+      TLSG\domain$     = Domain$ 
+      TLSG\CertFile$   = CertFile$
+      TLSG\KeyFile$    = KeyFile$
+      TLSG\CaCertFile$ = CaCertFile$
+      Result           = #TLS_Error_None
+    EndIf
+  EndIf 
   ProcedureReturn Result
+  
 EndProcedure
 
 Macro OpenNetworkConnection(ServerName, Port, Mode = #PB_Network_TCP | #PB_Network_IPv4, TimeOut = 0, LocaleIP = "", LocalePort = 0)
@@ -747,6 +741,7 @@ CompilerIf #PB_Compiler_IsMainFile
   Define Receive$
   Define *Buffer
   
+  Init_TLS()
   
   Con = OpenNetworkConnection("www.purebasic.fr", 443, #PB_Network_TCP | #PB_Network_IPv4 | #PB_Network_TLS_DEFAULT)
   If Con
