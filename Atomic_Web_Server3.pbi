@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b7
+;Version 3.1.0b8
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -37,29 +37,31 @@ UsePNGImageEncoder()
 UseZipPacker() 
 UseSHA2Fingerprint()
 
-CompilerSelect #PB_Compiler_OS ;for compatiblity with 6.04lts mk-soft
-  CompilerCase #PB_OS_Windows
-    CompilerIf #PB_Compiler_32Bit
-      ImportC "" 
-        _DateUTC.q(t=0) As "_time"  
-      EndImport 
-    CompilerElse   
-      ImportC "" 
-        _DateUTC.q(t=0) As "time"  
-      EndImport 
-    CompilerEndIf
-  CompilerCase #PB_OS_Linux
-    Procedure.q _DateUTC()
-      ProcedureReturn time_(#Null)
-    EndProcedure
-  CompilerCase #PB_OS_MacOS
-    ImportC ""
-      CFAbsoluteTimeGetCurrent.d()
-    EndImport
-    Procedure.q _DateUTC()
-      ProcedureReturn CFAbsoluteTimeGetCurrent() + Date(2001, 1, 1, 0, 0, 0)
-    EndProcedure
-CompilerEndSelect
+CompilerIf #PB_Compiler_Version <= 604 
+  CompilerSelect #PB_Compiler_OS ;for compatiblity with 6.04lts mk-soft
+    CompilerCase #PB_OS_Windows
+      CompilerIf #PB_Compiler_32Bit
+        ImportC "" 
+          DateUTC.q(t=0) As "_time"  
+        EndImport 
+      CompilerElse   
+        ImportC "" 
+          DateUTC.q(t=0) As "time"  
+        EndImport 
+      CompilerEndIf
+    CompilerCase #PB_OS_Linux
+      Procedure.q DateUTC()
+        ProcedureReturn time_(#Null)
+      EndProcedure
+    CompilerCase #PB_OS_MacOS
+      ImportC ""
+        CFAbsoluteTimeGetCurrent.d()
+      EndImport
+      Procedure.q DateUTC()
+        ProcedureReturn CFAbsoluteTimeGetCurrent() + Date(2001, 1, 1, 0, 0, 0)
+      EndProcedure
+  CompilerEndSelect
+CompilerEndIf 
 
 Structure Atomic_Server_Request 
   clientID.i
@@ -435,12 +437,12 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                 EndIf   
                 LockMutex(*Atomic_server\mux) 
                 If IsWindow(Atomic_Server_Log_window\window)
-                  *msg =  UTF8(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
+                  *msg =  UTF8(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",DateUTC())) 
                   If *msg 
                     PostEvent(#ATOMIC_SERVER_EVENT_ADD,Atomic_Server_Log_window\window,0,0,*msg)
                   EndIf
                 Else 
-                  PrintN(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",_DateUTC())) 
+                  PrintN(IPString(GetClientIP(ClientID)) + " " + Req + " client " + Str(ClientID) + " time " + FormatDate("%hh:%ii:%ss",DateUTC())) 
                 EndIf
               EndIf       
               UnlockMutex(*Atomic_server\mux)             
@@ -492,10 +494,9 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
       Atomic_Server_FreeClient(clients(),0) 
       DeleteMapElement(clients()) 
     Next   
-    ;FreeMemory(*buffer)       
+        
   Else
     MessageRequester(*Atomic_Server\Title, "Error: can't create the server (port " + *Atomic_Server\port + " in use ?)") 
-    ;FreeMemory(*buffer)  
   EndIf
   
 EndProcedure   
@@ -664,13 +665,16 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
       outpos + sendlen
       sendlen = 0 
       *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
-    Else
-      Delay(20) 
+    ElseIf (sendlen = -1 And outpos > 0) 
+      Delay(10) 
+    Else ;could be a tls error -2 or client may have disconnected on 1st try
+      Break 
     EndIf 
     If ElapsedMilliseconds() > *atomic_client\timeout
       Break    
     EndIf 
     Delay(1) ;for context switching 
+    
   Until (outpos >= len Or *atomic_client\kill) 
   
 EndProcedure   
@@ -840,23 +844,21 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
   Protected Timeout = ElapsedMilliseconds() + 5000 
   Protected *buffer ,pos,epos,head.s,ContentLen,MaxRequest 
   Protected result,con,sendlen,success,len 
-  
+  Protected st = ElapsedMilliseconds() 
   LockMutex(*atomic_client\lock) 
   If FindMapElement(*Atomic_Server\proxy(),*request\host) 
     
     *Atomic_Client\timeout = ElapsedMilliseconds() + 5000 
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
-      Debug "start proxy request"
       If SendNetworkString(con,*request\Request,#PB_UTF8) 
         Repeat
           Delay(1)
         Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data And ElapsedMilliseconds() < Timeout)
-        Debug "proxy recive / send "
         timeout = ElapsedMilliseconds() + 1000
         *buffer = AllocateMemory(*atomic_server\BufferSize) 
         Result = ReceiveNetworkData(con, *Buffer, *atomic_server\BufferSize)
-        If Result <> - 1  
+        If Result > - 1  
           If result > 500 
             len = 500 
           Else 
@@ -871,17 +873,17 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
             ContentLen=0
           EndIf 
           MaxRequest + result 
-          If ContentLen > 0  
+          If ContentLen > 0  And MaxRequest <= ContentLen 
             Repeat 
               *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
               Result = ReceiveNetworkData(con,*Buffer+MaxRequest,*atomic_server\BufferSize)
-              If result <> -1   
+              If result > -1   
                 MaxRequest + result
                 timeout = ElapsedMilliseconds() + 1000 
               ElseIf ElapsedMilliseconds() > timeout  
                 Break 
               Else   
-                Delay(1) 
+                Delay(10) 
               EndIf
             Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
           EndIf   
@@ -892,14 +894,14 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
           success = 1 
         EndIf 
         CloseNetworkConnection(con) 
-       EndIf 
-     Else 
-        Debug "failed to open connection" 
-      EndIf  
-      FreeMemory(*buffer) 
-    EndIf 
-    UnlockMutex(*atomic_client\lock) 
-    ProcedureReturn success 
+        FreeMemory(*buffer)    
+      EndIf 
+    Else 
+      Debug "failed to open connection" 
+    EndIf  
+  EndIf 
+  UnlockMutex(*atomic_client\lock) 
+  ProcedureReturn success 
   
 EndProcedure   
 
@@ -1133,7 +1135,7 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   Protected *Atomic_Server.Atomic_Server = *request\Serverid
   Protected *client.Atomic_Server_Client = *request\clientID 
   Protected Length
-  Protected date = _DateUTC()
+  Protected date = DateUTC()
   Protected Week.s = "Sun, Mon,Tue,Wed,Thu,Fri,Sat"
   Protected MonthsOfYear.s = "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec" 
   Protected DayOfWeek.s = StringField("Sun, Mon,Tue,Wed,Thu,Fri,Sat", DayOfWeek(Date) + 1, ",")
