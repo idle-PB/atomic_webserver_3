@@ -235,10 +235,18 @@ Structure TLS_Connections
   *ctx
 EndStructure
 
+Structure TLS_Certs 
+  CertFile$
+  KeyFile$
+  CaCertFile$
+  domain$
+EndStructure 
+
 Structure TLS_Globals
   CertFile$
   KeyFile$
   CaCertFile$
+  List certs.TLS_Certs()
   domain$
   LastError.i
   DLL.i
@@ -260,11 +268,11 @@ Procedure __MyInit()
   CompilerElse
     CompilerSelect #PB_Compiler_OS
       CompilerCase #PB_OS_Windows
-        CompilerIf #PB_Compiler_32Bit
-          TLSG\DLL = OpenLibrary(#PB_Any, "tls.dll")
-        CompilerElse 
+        CompilerIf #PB_Compiler_64Bit 
           TLSG\DLL = OpenLibrary(#PB_Any, "tlsx64.dll")
-        CompilerEndIf   
+        CompilerElse  
+          TLSG\DLL = OpenLibrary(#PB_Any, "tls.dll")
+        CompilerEndIf  
       CompilerDefault
         TLSG\DLL = OpenLibrary(#PB_Any, "./libtls.so.25.0.0")
      CompilerEndSelect
@@ -390,45 +398,50 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
   
   If TLSG\DLL And Mode & #PB_Network_TLSv1
     TLSMode = (Mode & #PB_Network_TLSv1) >> 3
-    *cfg    = tls_config_new()
-    If *cfg = 0
-      TLSG\LastError = #TLS_Error_NewConfig_Failed
-    Else
-      If TLSG\CertFile$ = "" And TLSG\KeyFile$ = "" And TLSG\CaCertFile$ = ""
-        tls_config_insecure_noverifycert(*cfg)
-        tls_config_insecure_noverifyname(*cfg)
-      Else
-        If TLSG\CertFile$
-          If tls_config_set_cert_file(*cfg, TLSG\CertFile$) = -1
-            TLSG\LastError = #TLS_Error_CantLoad_CertFile
+    TLSG\LastError = #TLS_Error_None 
+    *ctx = tls_server()
+    If *ctx 
+      ForEach tlsg\certs() 
+        *cfg  = tls_config_new()
+        If *cfg = 0
+          TLSG\LastError = #TLS_Error_NewConfig_Failed
+        Else
+          If TLSG\certs()\CertFile$ = "" And TLSG\certs()\KeyFile$ = "" And TLSG\Certs()\CaCertFile$ = ""
+            tls_config_insecure_noverifycert(*cfg)
+            tls_config_insecure_noverifyname(*cfg)
+          Else
+            If TLSG\certs()\CertFile$
+              If tls_config_set_cert_file(*cfg, TLSG\certs()\CertFile$) = -1
+                TLSG\LastError = #TLS_Error_CantLoad_CertFile
+              EndIf
+            EndIf
+            If TLSG\certs()\KeyFile$
+              If tls_config_set_key_file(*cfg, TLSG\certs()\KeyFile$) = -1
+                TLSG\LastError = #TLS_Error_CantLoad_KeyFile
+              EndIf
+            EndIf
+            If TLSG\certs()\CaCertFile$
+              If tls_config_set_ca_file(*cfg, TLSG\certs()\CaCertFile$) = -1
+                TLSG\LastError = #TLS_Error_CantLoad_RootCert
+              EndIf
+            EndIf
           EndIf
-        EndIf
-        If TLSG\KeyFile$
-          If tls_config_set_key_file(*cfg, TLSG\KeyFile$) = -1
-            TLSG\LastError = #TLS_Error_CantLoad_KeyFile
+          If tls_config_set_protocols(*cfg, TLSMode) = -1
+            TLSG\LastError = #TLS_Error_Unsupported_Protocol
           EndIf
-        EndIf
-        If TLSG\CaCertFile$
-          If tls_config_set_ca_file(*cfg, TLSG\CaCertFile$) = -1
-            TLSG\LastError = #TLS_Error_CantLoad_RootCert
-          EndIf
-        EndIf
-      EndIf
-      If tls_config_set_protocols(*cfg, TLSMode) = -1
-        TLSG\LastError = #TLS_Error_Unsupported_Protocol
-      EndIf
-      *ctx = tls_server()
-      If *ctx = 0
-        TLSG\LastError = #TLS_Error_Cant_Start_Server
-      ElseIf tls_configure(*ctx, *cfg) = -1
-        TLSG\LastError = #TLS_Error_Configure_Error
-      Else
-        *Error = tls_config_error(*cfg)
-        If *Error
-          Debug "TLS Config error: " + PeekS(*Error, - 1, #PB_UTF8)
-        EndIf
-        tls_config_free(*cfg)
-        Mode     = Mode & ($FFFFFFFF - #PB_Network_Extra)
+          
+          If tls_configure(*ctx, *cfg) = -1
+            TLSG\LastError = #TLS_Error_Configure_Error 
+            *Error = tls_config_error(*cfg)
+             If *Error
+                Debug "TLS Config error: " + PeekS(*Error, - 1, #PB_UTF8)
+              EndIf
+          EndIf     
+          tls_config_free(*cfg)
+        EndIf 
+      Next 
+      If *ctx 
+        Mode   = Mode & ($FFFFFFFF - #PB_Network_Extra)
         ServerID = CreateNetworkServer(Server, Port, #PB_Network_TCP | #PB_Network_IPv4, BindedIP)
         If ServerID
           Protected iocontext   
@@ -443,8 +456,10 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
             TLSG\Servers()\ctx = *ctx
             UnlockMutex(TLSG\muxSever) 
           EndIf
-         EndIf
+        EndIf
       EndIf
+    Else 
+      TLSG\LastError = #TLS_Error_Cant_Start_Server
     EndIf
   Else
     ServerID = CreateNetworkServer(Server, Port, Mode, BindedIP)
@@ -594,6 +609,7 @@ EndProcedure
 Procedure TLS_ReceiveNetworkData(ClientID, Buffer, Length)
   Protected Result,*client.TLS_Connections 
   
+  
   LockMutex(TLSG\muxClient) 
   
   *client = FindMapElement(TLSG\Clients(), Str(ClientID))
@@ -605,8 +621,9 @@ Procedure TLS_ReceiveNetworkData(ClientID, Buffer, Length)
   EndIf
   
   UnlockMutex(TLSG\muxClient)
-  
+   
   ProcedureReturn Result
+  
 EndProcedure
 
 Procedure TLS_SendNetworkData(ClientID, Buffer, Length)
@@ -686,16 +703,23 @@ Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")
   ;but you can call it as often as you want (to use different certificates right before a connection e.g.)
   Protected Result = #TLS_Error_InitFailed
   If tlsg\DLL 
-    If tls_init() = 0  ; TLS_Error_None
-      TLSG\domain$     = Domain$ 
-      TLSG\CertFile$   = CertFile$
-      TLSG\KeyFile$    = KeyFile$
-      TLSG\CaCertFile$ = CaCertFile$
+    If tls_init() = 0; TLS_Error_None
+      AddElement(TLSG\certs())
+      TLSG\certs()\domain$ = Domain$ 
+      TLSG\certs()\CertFile$ = CertFile$ 
+      TLSG\certs()\KeyFile$ = KeyFile$
+      TLSG\certs()\CaCertFile$ = CaCertFile$ 
+      If TLSG\CertFile$ <> "" 
+        TLSG\CertFile$ = CertFile$  
+        TLSG\KeyFile$ = KeyFile$ 
+        TLSG\CaCertFile$ = CaCertFile$ 
+        TLSG\domain$ = Domain$ 
+      EndIf   
       Result           = #TLS_Error_None
     EndIf
   EndIf 
-  ProcedureReturn Result
   
+  ProcedureReturn Result
 EndProcedure
 
 Macro OpenNetworkConnection(ServerName, Port, Mode = #PB_Network_TCP | #PB_Network_IPv4, TimeOut = 0, LocaleIP = "", LocalePort = 0)
@@ -741,7 +765,6 @@ CompilerIf #PB_Compiler_IsMainFile
   Define Receive$
   Define *Buffer
   
-  Init_TLS()
   
   Con = OpenNetworkConnection("www.purebasic.fr", 443, #PB_Network_TCP | #PB_Network_IPv4 | #PB_Network_TLS_DEFAULT)
   If Con
