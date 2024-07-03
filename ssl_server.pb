@@ -8,7 +8,8 @@ XIncludeFile "Atomic_Web_Server3.pbi"
 Global event,server1,title.s = "atomic_webserver 3"
 
 server1 = Atomic_Server_Init(title,"./www/",#Server_IP,"atomicwebserver.com",443)  
-Atomic_Server_Init_TLS(server1,"./certs/atomicwebserver.com/","certificate.crt","private.key","ca_bundle.crt")   
+Atomic_Server_Init_TLS(server1,"./certs/","atomicwebserver.com","certificate.crt","private.key","ca_bundle.crt")   
+
 OpenConsole()
 If OpenWindow(1, 0, 0, 800, 600, title, #PB_Window_SystemMenu | #PB_Window_SizeGadget)
   

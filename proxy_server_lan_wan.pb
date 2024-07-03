@@ -8,7 +8,7 @@
 ;this requires you edit your hosts file so you can associate the domains to IP number 
 ;run notepad as admin and edit host file with your respective IP numbers 
 ;C:\Windows\System32\drivers\etc\hosts 
-;192.168.1.54     atomicwebserver1.com
+;192.168.1.54     atomicwebserver.com
 ;192.168.1.54     atomicwebserver2.com
 
 ;Next compile twice   
@@ -16,7 +16,7 @@
 ;Set #proxy=1 And compile With Debugger
 ;When you vist atomicwebserver2.com it will proxy it via atomicwebserer1.com  
 
-#proxy = 0
+#proxy = 1
 #Server_IP = "192.168.1.54"  
 
 XIncludeFile "Atomic_Web_Server3.pbi"
@@ -110,32 +110,24 @@ CompilerIf #Proxy
     
   Global event,server1,title.s = "atomic_webserver 1"
   
-  server1 = Atomic_Server_Init(title,"./www/",#Server_IP,"atomicweberver1.com",80) ;this is our proxy server navigate to http://atomicweberver1.com  
-  Atomic_Server_Add_Proxy(server1,"atomicwebserver2.com","127.0.0.1",81) ;set server 1 to proxy to port 81    
-    
-  Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to http://127.0.0.1/foo?foo=1234&bar=56789
-  Atomic_Server_Add_Handler(server1,"atomicweberver1.com/bar",@URIbar()) ;navigate to http://atomicweberver1.com/bar?foo=1234&bar=56789
+  server1 = Atomic_Server_Init(title,"./www/",#Server_IP,"atomicwebserver.com",80) ;this is our proxy server navigate to http://atomicwebserver.com  
+  Atomic_Server_Add_Proxy(server1,"atomicwebserver2.com","127.0.0.1",81)          ;set server 1 to proxy to port 81    
   
-  If OpenWindow(1, 0, 0, 800, 600, title, #PB_Window_SystemMenu | #PB_Window_SizeGadget)
-    
-    EditorGadget(0, 0, 0, 800, 560, #PB_Editor_ReadOnly)
-    AddGadgetItem(0,-1, "Server Running on port 80")
-    Atomic_Server_start(server1,1,1) ;
+  Atomic_Server_Add_Handler(server1,"atomicwebserver.com/foo",@URIfoo()) ;navigate to http://atomicwebserver.com/foo?foo=1234&bar=56789
+  Atomic_Server_Add_Handler(server1,"atomicwebserver.com/bar",@URIbar()) ;navigate to http://atomicwebserver.com/bar?foo=1234&bar=56789
+  
+  OpenConsole() 
+  
+  If Atomic_Server_Start(server1,-1,1)  ;start server no window logs to console 
     
     Repeat 
-      event = WaitWindowEvent()
-      Select event 
-        Case #ATOMIC_SERVER_EVENT_ADD  
-          AddGadgetItem(0, -1, PeekS(EventData(),-1,#PB_UTF8))
-          FreeMemory(EventData()) ;<-----IMPORTANT you must free the EventData or it will leak memory.                                 
-        Case #PB_Event_CloseWindow
-          Break 
-      EndSelect   
-    ForEver  
+    Until Input() = "quit"   ;type quit to exit 
     
     Atomic_Server_Exit(server1)
+    CloseConsole()
     
-  EndIf
+  EndIf 
+
   
 CompilerElse 
   
@@ -143,28 +135,19 @@ CompilerElse
   
   server2 = Atomic_Server_Init(title,"./www/","127.0.0.1","atomicwebserver2.com",81) ;this is our proxy server navigate to http://atomicweberver1.com  
   
-  Atomic_Server_Add_Handler(server2,"atomicweberver2.com/bar",@URIbar()) ;navigate to http://atomicweberver2.com/bar?foo=12345&bar=56789
+  Atomic_Server_Add_Handler(server2,"atomicwebserver2.com/bar",@URIbar()) ;navigate to http://atomicwebserver2.com/bar?foo=12345&bar=56789
   
-  If OpenWindow(1, 0, 0, 800, 600, title, #PB_Window_SystemMenu | #PB_Window_SizeGadget)
+  OpenConsole() 
+  
+   If Atomic_Server_Start(server2,-1,1)  ;start server no window logs to console 
     
-    EditorGadget(0, 0, 0, 800, 560, #PB_Editor_ReadOnly)
-    AddGadgetItem(0,-1, "Server Running on port 81")
-    
-    Atomic_Server_start(server2,1,1) ;
     Repeat 
-      event = WaitWindowEvent()
-      Select event 
-        Case #ATOMIC_SERVER_EVENT_ADD  
-          AddGadgetItem(0, -1, PeekS(EventData(),-1,#PB_UTF8))
-          FreeMemory(EventData()) ;<-----IMPORTANT you must free the EventData or it will leak memory.                                 
-        Case #PB_Event_CloseWindow
-          Break 
-      EndSelect   
-    ForEver  
+    Until Input() = "quit"   ;type quit to exit 
     
     Atomic_Server_Exit(server2)
+    CloseConsole()
     
-  EndIf
+  EndIf 
   
   
 CompilerEndIf   

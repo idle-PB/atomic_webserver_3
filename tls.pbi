@@ -236,6 +236,7 @@ Structure TLS_Connections
 EndStructure
 
 Structure TLS_Certs 
+  Path$
   CertFile$
   KeyFile$
   CaCertFile$
@@ -401,48 +402,41 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
     TLSG\LastError = #TLS_Error_None 
     *ctx = tls_server()
     If *ctx 
-      ForEach tlsg\certs() 
-        *cfg  = tls_config_new()
-        If *cfg = 0
-          TLSG\LastError = #TLS_Error_NewConfig_Failed
-        Else
-          If TLSG\certs()\CertFile$ = "" And TLSG\certs()\KeyFile$ = "" And TLSG\Certs()\CaCertFile$ = ""
-            tls_config_insecure_noverifycert(*cfg)
-            tls_config_insecure_noverifyname(*cfg)
-          Else
-            If TLSG\certs()\CertFile$
-              If tls_config_set_cert_file(*cfg, TLSG\certs()\CertFile$) = -1
-                TLSG\LastError = #TLS_Error_CantLoad_CertFile
-              EndIf
-            EndIf
-            If TLSG\certs()\KeyFile$
-              If tls_config_set_key_file(*cfg, TLSG\certs()\KeyFile$) = -1
-                TLSG\LastError = #TLS_Error_CantLoad_KeyFile
-              EndIf
-            EndIf
-            If TLSG\certs()\CaCertFile$
-              If tls_config_set_ca_file(*cfg, TLSG\certs()\CaCertFile$) = -1
-                TLSG\LastError = #TLS_Error_CantLoad_RootCert
-              EndIf
-            EndIf
-          EndIf
-          If tls_config_set_protocols(*cfg, TLSMode) = -1
-            TLSG\LastError = #TLS_Error_Unsupported_Protocol
-          EndIf
-          
-          If tls_configure(*ctx, *cfg) = -1
-            TLSG\LastError = #TLS_Error_Configure_Error 
-            *Error = tls_config_error(*cfg)
-             If *Error
-                Debug "TLS Config error: " + PeekS(*Error, - 1, #PB_UTF8)
-              EndIf
-          EndIf     
-          tls_config_free(*cfg)
+      *cfg  = tls_config_new()
+      If *cfg = 0
+        TLSG\LastError = #TLS_Error_NewConfig_Failed
+      Else
+        FirstElement(TLSG\certs())
+        
+        tls_config_set_ca_path(*cfg,TLSG\certs()\Path$)
+        
+        If tls_config_set_keypair_file(*cfg,tlsg\certs()\CertFile$,tlsg\certs()\KeyFile$) = -1
+          TLSG\LastError = #TLS_Error_CantLoad_CertFile
         EndIf 
-      Next 
+        
+        While NextElement(TLSG\certs()) 
+          If tls_config_add_keypair_file(*cfg,tlsg\certs()\CertFile$,tlsg\certs()\KeyFile$) = -1
+            TLSG\LastError = #TLS_Error_CantLoad_CertFile
+          EndIf   
+        Wend   
+                
+        If tls_config_set_protocols(*cfg, TLSMode) = -1
+          TLSG\LastError = #TLS_Error_Unsupported_Protocol
+        EndIf
+        
+        If tls_configure(*ctx, *cfg) = -1
+          TLSG\LastError = #TLS_Error_Configure_Error 
+          *Error = tls_config_error(*cfg)
+          If *Error
+            PrintN("TLS Config error: " + PeekS(*Error, - 1, #PB_UTF8))
+          EndIf
+        EndIf     
+        tls_config_free(*cfg)
+      EndIf 
+      
       If *ctx 
         Mode   = Mode & ($FFFFFFFF - #PB_Network_Extra)
-        ServerID = CreateNetworkServer(Server, Port, #PB_Network_TCP | #PB_Network_IPv4, BindedIP)
+        ServerID = CreateNetworkServer(Server, Port, mode, BindedIP)
         If ServerID
           Protected iocontext   
           If tls_accept_socket(*ctx,@iocontext,ServerID(ServerID)) = -1
@@ -493,9 +487,9 @@ Procedure TLS_NetworkServerEvent(ServerID)
           AddMapElement(TLSG\Clients(),Str(ClientID))
           TLSG\Clients()\ctx = ctx
           If tls_handshake(ctx) = -1 
-            CloseNetworkConnection(ClientID) 
-            DeleteMapElement(TLSG\Clients(),Str(ClientID))
-            Result = #PB_NetworkEvent_None
+           CloseNetworkConnection(ClientID) 
+           DeleteMapElement(TLSG\Clients(),Str(ClientID))
+           Result = #PB_NetworkEvent_None
           EndIf 
           
           UnlockMutex(TLSG\muxClient)  
@@ -697,14 +691,13 @@ Procedure TLS_CloseNetworkConnection(ClientID)
   
 EndProcedure
 
-Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")
-  ;Only needed, when you have certificates.
-  ;the library will call tls_init() internally already when needed
-  ;but you can call it as often as you want (to use different certificates right before a connection e.g.)
+Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "",caPath$="")
+  
   Protected Result = #TLS_Error_InitFailed
   If tlsg\DLL 
     If tls_init() = 0; TLS_Error_None
       AddElement(TLSG\certs())
+      tlsg\certs()\Path$ = caPath$
       TLSG\certs()\domain$ = Domain$ 
       TLSG\certs()\CertFile$ = CertFile$ 
       TLSG\certs()\KeyFile$ = KeyFile$
@@ -715,7 +708,7 @@ Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "")
         TLSG\CaCertFile$ = CaCertFile$ 
         TLSG\domain$ = Domain$ 
       EndIf   
-      Result           = #TLS_Error_None
+      Result  = #TLS_Error_None
     EndIf
   EndIf 
   

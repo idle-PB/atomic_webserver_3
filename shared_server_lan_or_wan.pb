@@ -111,28 +111,20 @@ EndProcedure
 
 Global event, server1
 
-server1 = Atomic_Server_Init("atomic_webserver","./www/",#Server_IP,"atomicwebserver1.com",80)  ;init the server on local host  
+server1 = Atomic_Server_Init("atomic_webserver","./www/",#Server_IP,"atomicwebserver.com",80)  ;init the server on local host  
 
-Atomic_Server_Add_Handler(server1,"foo",@URIfoo()) ;navigate to #Server_IP /foo?foo=1234&bar=56789
-Atomic_Server_Add_Handler(server1,"atomicweberver1.com/bar",@URIbar()) ;navigate to http://atomicweberver1.com/bar?foo=1234&bar=56789
-Atomic_Server_Add_Handler(server1,"atomicweberver2.com/bar",@URIbar()) ;navigate to http://atomicweberver2.com/bar?foo=12345&bar=56789
+Atomic_Server_Add_Handler(server1,"atomicwebserver.com/foo",@URIfoo()) ;navigate to http://atomicwebserver.com/foo?foo=1234&bar=56789
+Atomic_Server_Add_Handler(server1,"atomicwebserver.com/bar",@URIbar()) ;navigate to http://atomicwebserver.com/bar?foo=1234&bar=56789
+Atomic_Server_Add_Handler(server1,"atomicwebserver2.com/bar",@URIbar()) ;navigate to http://atomicwebserver2.com/bar?foo=12345&bar=56789
 
-If OpenWindow(1, 0, 0, 800, 600, "my log window", #PB_Window_SystemMenu | #PB_Window_SizeGadget)
+OpenConsole() 
+
+If Atomic_Server_Start(server1,-1,1)  ;start server no window logs to console 
   
-  EditorGadget(0, 0, 0, 800, 560, #PB_Editor_ReadOnly)
-  AddGadgetItem(0,-1, "Server Running on port 80")
-  Atomic_Server_start(server1,1,1) ;start the server 
   Repeat 
-    event = WaitWindowEvent()
-    Select event 
-      Case #ATOMIC_SERVER_EVENT_ADD  ;logging event 
-        AddGadgetItem(0, -1, PeekS(EventData(),-1,#PB_UTF8))
-        FreeMemory(EventData()) ;<-----IMPORTANT you must free the EventData or it will leak memory.                                 
-      Case #PB_Event_CloseWindow
-        Break 
-     EndSelect   
-  ForEver  
+  Until Input() = "quit"   ;type quit to exit 
   
-  Atomic_Server_Exit(server1) ;close the server 
+  Atomic_Server_Exit(server1)
+  CloseConsole()
   
-EndIf
+EndIf 

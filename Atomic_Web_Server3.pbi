@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b8
+;Version 3.1.0b9
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -61,6 +61,14 @@ CompilerIf #PB_Compiler_Version <= 604
         ProcedureReturn CFAbsoluteTimeGetCurrent() + Date(2001, 1, 1, 0, 0, 0)
       EndProcedure
   CompilerEndSelect
+CompilerEndIf 
+
+CompilerIf #PB_Compiler_OS <> #PB_OS_Windows 
+  CompilerIf #PB_Compiler_Backend = #PB_Backend_Asm
+    ImportC ""
+      errno
+    EndImport
+  CompilerEndIf 
 CompilerEndIf 
 
 Structure Atomic_Server_Request 
@@ -182,20 +190,69 @@ CompilerIf #PB_Compiler_OS = #PB_OS_Windows
       ProcedureReturn option 
     EndIf 
   EndProcedure   
-  
-  Procedure GetNetworkError(ID) 
-    Protected option.l,oplen.l=4 
     
-    ProcedureReturn WSAGetLastError_()
-    
-    If getsockopt_(ID,#SOL_SOCKET,#SO_ERROR,@option,@oplen ) = 0 
-      ProcedureReturn option 
-    EndIf
-    ProcedureReturn -1 
-    
-  EndProcedure   
-  
 CompilerEndIf   
+
+Procedure Atomic_Server_NetworkErrorContinue(ID) 
+  Protected ret,option.l,oplen.l=4 
+  
+  #WSA_IO_INCOMPLETE = 996
+  #WSA_IO_PENDING = 997
+  #WSAEINTR = 10004
+  #WSAEMFILE = 10024
+  #WSAEWOULDBLOCK = 10035
+  #WSAEINPROGRESS = 10036
+  #WSAEALREADY = 10037
+  
+  #_WANT_POLLIN  = -2
+  #_WANT_POLLOUT = -3
+    
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows 
+    option = WSAGetLastError_()
+  CompilerElse 
+    CompilerIf #PB_Compiler_Backend = #PB_Backend_C
+      !#include "errno.h"
+      !extern int errno;
+      !v_option=errno;
+    CompilerElse
+      option = errno 
+    CompilerEndIf 
+  CompilerEndIf
+    
+  Select option 
+    Case 0 
+      ret = 1
+    Case  #WSAEWOULDBLOCK  
+      ret = 1 
+      Debug "would block"
+    Case  #WSAEINPROGRESS   
+      Debug "#WSAEINPROGRESS"
+      ret = 1  
+    Case  #WSAEALREADY  
+      Debug "#WSAEALREADY"
+      ret = 1  
+    Case  #WSA_IO_INCOMPLETE
+      Debug "#WSA_IO_INCOMPLETE"
+      ret =1   
+    Case  #WSA_IO_PENDING
+      Debug "#WSA_IO_PENDING"
+      ret = 1  
+    Case  #WSAEMFILE 
+      ret =1 
+      Debug "#WSAEMFILE"
+    Case #_WANT_POLLIN
+      ret =1 
+       Debug "#TLS_WANT_POLLIN"
+    Case #_WANT_POLLOUT 
+      ret = 1 
+      Debug "#TLS_WANT_POLLOUT"
+    Default 
+      Debug option   
+  EndSelect   
+  
+  ProcedureReturn ret 
+  
+EndProcedure  
 
 Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server) 
   ;Ref : https://fr.wikipedia.org/wiki/Type_MIME       
@@ -344,7 +401,6 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
   If *Atomic_server\Port <> 443 
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
   Else   
-    Init_TLS(*Atomic_server\DomainAlias,*Atomic_Server\CertFile,*Atomic_Server\KeyFile,*Atomic_Server\CaCertFile)
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_Network_TLS_DEFAULT,*Atomic_server\IP)
   EndIf 
   
@@ -391,7 +447,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
           timeout = ElapsedMilliseconds() + 1000
           *buffer = AllocateMemory(*atomic_server\BufferSize) 
           Result = ReceiveNetworkData(ClientID, *Buffer, *atomic_server\BufferSize)
-          If Result > - 1  
+          If Result > 0   
             If result > 500 
               len = 500 
             Else 
@@ -410,14 +466,18 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               Repeat 
                 *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
                 Result = ReceiveNetworkData(CLientid,*Buffer+MaxRequest,*atomic_server\BufferSize)
-                If result > -1   
+                If result > 0; -1   
                   MaxRequest + result
                   timeout = ElapsedMilliseconds() + 1000 
                 ElseIf ElapsedMilliseconds() > timeout  
                   PrintN("receive Data time out") 
+                  MaxRequest=0
                   Break 
-                Else   
+                ElseIf Atomic_Server_NetworkErrorContinue(clientid)    
                   Delay(1) 
+                Else 
+                  MaxRequest=0
+                  Break 
                 EndIf
               Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
             EndIf 
@@ -643,8 +703,9 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
   
   Protected  *atomic_server.Atomic_Server = *request\Serverid  
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
-  Protected outpos,trylen,sendlen
+  Protected   outpos,trylen,sendlen
   
+  *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
   Repeat
     
     trylen = len - outpos
@@ -664,16 +725,16 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     If sendlen > 0
       outpos + sendlen
       sendlen = 0 
-      *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
-    ElseIf (sendlen = -1 And outpos > 0) 
+      *atomic_client\timeout = ElapsedMilliseconds() + 5000
+    ElseIf Atomic_Server_NetworkErrorContinue(*atomic_client\id) 
       Delay(10) 
-    Else ;could be a tls error -2 or client may have disconnected on 1st try
+    Else 
       Break 
     EndIf 
     If ElapsedMilliseconds() > *atomic_client\timeout
       Break    
     EndIf 
-    Delay(1) ;for context switching 
+    Delay(1) 
     
   Until (outpos >= len Or *atomic_client\kill) 
   
@@ -841,24 +902,23 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
   
   Protected *Atomic_Server.Atomic_Server = *request\serverid 
   Protected *Atomic_Client.Atomic_Server_Client = *request\clientID 
-  Protected Timeout = ElapsedMilliseconds() + 5000 
   Protected *buffer ,pos,epos,head.s,ContentLen,MaxRequest 
   Protected result,con,sendlen,success,len 
   Protected st = ElapsedMilliseconds() 
   LockMutex(*atomic_client\lock) 
   If FindMapElement(*Atomic_Server\proxy(),*request\host) 
     
-    *Atomic_Client\timeout = ElapsedMilliseconds() + 5000 
+    *Atomic_Client\timeout = ElapsedMilliseconds() + *Atomic_Server\timeout  
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
       If SendNetworkString(con,*request\Request,#PB_UTF8) 
         Repeat
           Delay(1)
-        Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data And ElapsedMilliseconds() < Timeout)
-        timeout = ElapsedMilliseconds() + 1000
+        Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data And ElapsedMilliseconds() < *Atomic_Client\Timeout)
+        *Atomic_Client\timeout = ElapsedMilliseconds() + 5000
         *buffer = AllocateMemory(*atomic_server\BufferSize) 
         Result = ReceiveNetworkData(con, *Buffer, *atomic_server\BufferSize)
-        If Result > - 1  
+        If Result > 0  
           If result > 500 
             len = 500 
           Else 
@@ -877,20 +937,22 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
             Repeat 
               *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
               Result = ReceiveNetworkData(con,*Buffer+MaxRequest,*atomic_server\BufferSize)
-              If result > -1   
+              If result > 0   
                 MaxRequest + result
-                timeout = ElapsedMilliseconds() + 1000 
-              ElseIf ElapsedMilliseconds() > timeout  
+                *Atomic_Client\timeout = ElapsedMilliseconds() + 5000
+              ElseIf ElapsedMilliseconds() > *Atomic_Client\timeout  
                 Break 
-              Else   
+              ElseIf Atomic_Server_NetworkErrorContinue(con)   
                 Delay(10) 
+              Else 
+                Break 
               EndIf
             Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
           EndIf   
         EndIf  
         If MaxRequest > 0     
           Atomic_Server_Send(*request,*buffer,MaxRequest,0) 
-          *Atomic_Client\timeout = ElapsedMilliseconds() + *Atomic_server\timeout
+          *Atomic_Client\timeout = ElapsedMilliseconds() + 5000
           success = 1 
         EndIf 
         CloseNetworkConnection(con) 
@@ -1517,11 +1579,12 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
   
 EndProcedure
 
-Procedure Atomic_Server_Init_TLS(server,path.s,CertFile.s,KeyFile.s,CaCertFile.s)
+Procedure Atomic_Server_Init_TLS(server,path.s,domain.s,CertFile.s,KeyFile.s,CaCertFile.s)
   Protected *atomic_server.Atomic_Server = server 
-  *atomic_server\CaCertFile = path + CaCertFile  
-  *atomic_server\KeyFile = path + KeyFile 
-  *atomic_server\CertFile = path + CertFile 
+  *atomic_server\CaCertFile = path + domain + "/" + CaCertFile  
+  *atomic_server\KeyFile = path + domain + "/" + KeyFile 
+  *atomic_server\CertFile = path + domain + "/" + CertFile 
+  Init_TLS(domain,*atomic_server\CertFile,*atomic_server\KeyFile,*atomic_server\CaCertFile,path) 
 EndProcedure  
 
 Procedure Atomic_Server_Start(server,window=-1,bLog=0)  
