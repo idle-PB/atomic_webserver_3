@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b9
+;Version 3.1.0b10
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -101,6 +101,7 @@ Structure Atomic_Server_Client
   regex.i
   kill.i
   done.i
+  ip.s 
   pack.iEzPack 
   Map  Cookies.s(64)
   Map  ResponseHeaders.s(64) 
@@ -422,6 +423,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               If AddMapElement(clients(),key)
                 clients()\ID = clientID 
                 clients()\serverid = *Atomic_server 
+                clients()\ip = IPString(GetClientIP(ClientID))
                 clients()\lock = CreateMutex()
                 clients()\regex = CreateRegularExpression(#PB_Any,"(?:\s*\w+\s*=\s*[\d\w-_.]+\s*;?)*$") 
                 clients()\timeout = ElapsedMilliseconds() + *Atomic_server\timeout 
@@ -750,35 +752,36 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   
   If FindMapElement(*Atomic_Server\URIHandlers(),Requestfile)
     *data = *Atomic_Server\URIHandlers()\pt(*request)
-    If *request\bcompress 
-      *data = Atomic_Server_deflate(*request,*Data,MemorySize(*data)) 
-    EndIf   
-    FileLength = MemorySize(*data) 
-    If *request\Type = #ATOMIC_SERVER_HEAD
-      *request\status = 100    
-      *FileBuffer  = AllocateMemory(8192)
-      *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
-      fulllen = *BufferOffset - *FileBuffer
-      Atomic_Server_send(*request,*FileBuffer,fulllen) 
-      FreeMemory(*FileBuffer)
-      FreeMemory(*data) 
-      ProcedureReturn #True 
-    ElseIf *request\Type = #ATOMIC_SERVER_GET Or *request\Type = #ATOMIC_SERVER_POST  
-      
-      *FileBuffer   = AllocateMemory(FileLength + 8192)
-      *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
-      CopyMemory(*data,*BufferOffset,FileLength)
-      outpos = 0
-      fulllen = *BufferOffset - *FileBuffer + FileLength
-      Atomic_Server_Send(*request,*filebuffer,fulllen)
-      FreeMemory(*FileBuffer)
-      FreeMemory(*data)  
-      If outpos >= fulllen
+    If *data 
+      If *request\bcompress 
+        *data = Atomic_Server_deflate(*request,*Data,MemorySize(*data)) 
+      EndIf   
+      FileLength = MemorySize(*data) 
+      If *request\Type = #ATOMIC_SERVER_HEAD
+        *request\status = 100    
+        *FileBuffer  = AllocateMemory(8192)
+        *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
+        fulllen = *BufferOffset - *FileBuffer
+        Atomic_Server_send(*request,*FileBuffer,fulllen) 
+        FreeMemory(*FileBuffer)
+        FreeMemory(*data) 
         ProcedureReturn #True 
-      EndIf
-    EndIf 
-  EndIf        
-  
+      ElseIf (*request\Type = #ATOMIC_SERVER_GET Or *request\Type = #ATOMIC_SERVER_POST)  
+         *request\status = 200   
+        *FileBuffer   = AllocateMemory(FileLength + 8192)
+        *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
+        CopyMemory(*data,*BufferOffset,FileLength)
+        outpos = 0
+        fulllen = *BufferOffset - *FileBuffer + FileLength
+        Atomic_Server_Send(*request,*filebuffer,fulllen)
+        FreeMemory(*FileBuffer)
+        FreeMemory(*data)  
+        If outpos >= fulllen
+          ProcedureReturn #True 
+        EndIf
+      EndIf 
+    EndIf        
+  EndIf 
 EndProcedure  
 
 Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal function retrives cookies 
@@ -1484,7 +1487,7 @@ Procedure Atomic_Server_Add_Handler(server,uri.s,*pcbhandler)
   Protected *Atomic_Server.Atomic_Server = server 
   *Atomic_Server\URIHandlers(uri)\pt = *pcbhandler  
   
-EndProcedure 
+EndProcedure
 
 Procedure Atomic_Server_Add_Proxy(server,domain.s,IP.s,port.i) 
   
