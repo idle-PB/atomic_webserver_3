@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b10
+;Version 3.1.0b12
 ;Authors Idle, Fantaisie Software
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -65,9 +65,9 @@ CompilerEndIf
 
 CompilerIf #PB_Compiler_OS <> #PB_OS_Windows 
   CompilerIf #PB_Compiler_Backend = #PB_Backend_Asm
-    ImportC ""
-      errno
-    EndImport
+      ImportC ""
+        __errno_location()
+     EndImport
   CompilerEndIf 
 CompilerEndIf 
 
@@ -175,7 +175,7 @@ CompilerIf #PB_Compiler_OS = #PB_OS_Windows
     
   EndProcedure    
   
-  Procedure TCPNoDelay(ID,set.l=#True)  
+   Procedure TCPNoDelay(ID,set.l=#True)  
     Protected option.l,oplen.l=4 
     If setsockopt_(ID,#IPPROTO_TCP,#TCP_NODELAY,@set,oplen) = 0 
       If getsockopt_(ID,#IPPROTO_TCP,#TCP_NODELAY,@option,@oplen ) = 0 
@@ -191,7 +191,40 @@ CompilerIf #PB_Compiler_OS = #PB_OS_Windows
       ProcedureReturn option 
     EndIf 
   EndProcedure   
+      
+  Structure SO_LINGER_Structure
+    l_onoff.l
+    l_linger.l
+  EndStructure
     
+  Procedure SetLinger(ConID,bon=1,time=0) 
+    Protected  errno,res,SoLinger.SO_LINGER_Structure
+    SoLinger\l_onoff =bon
+    SoLinger\l_linger = time
+    res = setsockopt_(conid, #SOL_SOCKET, #SO_LINGER, @SoLinger, SizeOf(SO_LINGER_Structure))
+    If res <> 0
+      errno = GetLastError_()
+      Debug errno
+    EndIf
+  EndProcedure 
+    
+ CompilerElseIf #PB_Compiler_OS = #PB_OS_Linux   
+  
+  Structure SO_LINGER_Structure
+    l_onoff.l
+    l_linger.l
+  EndStructure
+    
+  Procedure SetLinger(ConID,bon=1,time-0) 
+    Protected  SoLinger.SO_LINGER_Structure
+    SoLinger\l_onoff =bon
+    SoLinger\l_linger = time
+    res = setsockopt_(conid, #SOL_SOCKET, #SO_LINGER, @SoLinger, SizeOf(SO_LINGER_Structure))
+    If res <> 0
+      errno = PeekL(errno_location()) 
+      Debug PeekS(strerror_(errno), -1, #PB_Ascii)
+    EndIf
+  EndProcedure 
 CompilerEndIf   
 
 Procedure Atomic_Server_NetworkErrorContinue(ID) 
@@ -216,7 +249,7 @@ Procedure Atomic_Server_NetworkErrorContinue(ID)
       !extern int errno;
       !v_option=errno;
     CompilerElse
-      option = errno 
+      option = PeekL(__errno_location()) 
     CompilerEndIf 
   CompilerEndIf
     
@@ -225,7 +258,7 @@ Procedure Atomic_Server_NetworkErrorContinue(ID)
       ret = 1
     Case  #WSAEWOULDBLOCK  
       ret = 1 
-      Debug "would block"
+      Debug "#WSAEWOULDBLOCK"
     Case  #WSAEINPROGRESS   
       Debug "#WSAEINPROGRESS"
       ret = 1  
@@ -318,6 +351,7 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
   *Atomic_server\MimeTypes("mpg") = "video/mpeg"
   *Atomic_server\MimeTypes("ogv") = "video/ogg"
   *Atomic_server\MimeTypes("qt") = "video/quicktime"
+  *Atomic_server\MimeTypes("wmv") = "video/wmv"
   
   *Atomic_server\MimeTypes("arj") = "application/x-arj-compressed"
   *Atomic_server\MimeTypes("gz") = "application/x-gunzip"
@@ -345,6 +379,7 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
   *Atomic_server\MimeTypes("asf") = "video/x-ms-asf"
   *Atomic_server\MimeTypes("avi") = "video/x-msvideo"
   *Atomic_server\MimeTypes("m4v") = "video/x-m4v"
+  *Atomic_server\MimeTypes("mvt") = "application/vnd.mapbox-vector-tile"
   
 EndProcedure 
 
@@ -367,7 +402,6 @@ EndEnumeration
 #ATOMIC_SERVER_GET = 1 
 #ATOMIC_SERVER_POST = 2
 #ATOMIC_SERVER_HEAD = 3 
-
 
 Procedure Atomic_Server_FreeClient(*client.Atomic_Server_Client,bclose=1) 
   Protected *Atomic_Server.Atomic_Server = *client\ServerId  
@@ -402,13 +436,17 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
   If *Atomic_server\Port <> 443 
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
   Else   
-    atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_Network_TLS_DEFAULT,*Atomic_server\IP)
+    atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_NetworK_TLS_DEFAULT,*Atomic_server\IP)
+    ;atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer ,*Atomic_server\IP)  
   EndIf 
   
   If atomicserver
     CompilerIf #PB_Compiler_OS = #PB_OS_Windows  
-      TCPNoDelay(ServerID(atomicserver),1) 
-    CompilerEndIf   
+      TCPNoDelay(ServerID(atomicserver),1)
+      SetLinger(ServerID(atomicserver),1,0) 
+    CompilerElse 
+      SetLinger(ServerID(atomicserver),1,0) 
+     CompilerEndIf   
     *Atomic_server\serverid = *Atomic_server
     Repeat    
       ServerEvent = NetworkServerEvent(atomicserver)
@@ -548,7 +586,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
               DeleteMapElement(clients()) 
             EndIf 
           Next 
-          Delay(10)
+          Delay(1)
       EndSelect
     Until *Atomic_Server\quit
     CloseNetworkServer(atomicserver)  
@@ -705,9 +743,9 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
   
   Protected  *atomic_server.Atomic_Server = *request\Serverid  
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
-  Protected   outpos,trylen,sendlen
+  Protected   outpos,trylen,sendlen,sendtimeout
   
-  *atomic_client\timeout = ElapsedMilliseconds() + *atomic_server\timeout
+  sendtimeout = ElapsedMilliseconds() + 5000
   Repeat
     
     trylen = len - outpos
@@ -723,23 +761,23 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
       Else  
         Delay(10)
       EndIf 
-    Until ElapsedMilliseconds() > *atomic_client\timeout
+    Until ElapsedMilliseconds() > sendtimeout
     If sendlen > 0
       outpos + sendlen
       sendlen = 0 
-      *atomic_client\timeout = ElapsedMilliseconds() + 5000
+      sendtimeout = ElapsedMilliseconds() + 5000
     ElseIf Atomic_Server_NetworkErrorContinue(*atomic_client\id) 
       Delay(10) 
     Else 
       Break 
     EndIf 
-    If ElapsedMilliseconds() > *atomic_client\timeout
+    If ElapsedMilliseconds() > sendtimeout
       Break    
     EndIf 
     Delay(1) 
-    
+     
   Until (outpos >= len Or *atomic_client\kill) 
-  
+   *atomic_client\timeout + 5000  
 EndProcedure   
 
 Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,Requestfile.s) 
@@ -748,40 +786,60 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   Protected outpos,fulllen,trylen,sendlen
   Protected  *atomic_server.Atomic_Server = server 
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
-  Protected  pos  
+  Protected  a,pos,x,ts$  
   
-  If FindMapElement(*Atomic_Server\URIHandlers(),Requestfile)
-    *data = *Atomic_Server\URIHandlers()\pt(*request)
-    If *data 
-      If *request\bcompress 
-        *data = Atomic_Server_deflate(*request,*Data,MemorySize(*data)) 
-      EndIf   
-      FileLength = MemorySize(*data) 
-      If *request\Type = #ATOMIC_SERVER_HEAD
-        *request\status = 100    
-        *FileBuffer  = AllocateMemory(8192)
-        *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
-        fulllen = *BufferOffset - *FileBuffer
-        Atomic_Server_send(*request,*FileBuffer,fulllen) 
-        FreeMemory(*FileBuffer)
-        FreeMemory(*data) 
-        ProcedureReturn #True 
-      ElseIf (*request\Type = #ATOMIC_SERVER_GET Or *request\Type = #ATOMIC_SERVER_POST)  
-         *request\status = 200   
-        *FileBuffer   = AllocateMemory(FileLength + 8192)
-        *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
-        CopyMemory(*data,*BufferOffset,FileLength)
-        outpos = 0
-        fulllen = *BufferOffset - *FileBuffer + FileLength
-        Atomic_Server_Send(*request,*filebuffer,fulllen)
-        FreeMemory(*FileBuffer)
-        FreeMemory(*data)  
-        If outpos >= fulllen
+  Protected  NewList uris.s() 
+  
+  x = CountString(Requestfile,"/")+1 
+  ts$ = StringField(Requestfile,1,"/") 
+  
+  For a = 2 To x 
+    ts$  + "/" + StringField(Requestfile,a,"/") 
+    ResetList(uris())
+    AddElement(uris()) 
+    uris() = ts$ 
+  Next 
+  
+  ForEach uris() 
+        
+    If FindMapElement(*Atomic_Server\URIHandlers(),uris())
+      Debug uris() 
+      
+      *data = *Atomic_Server\URIHandlers()\pt(*request)
+      If *data 
+        If *request\bcompress 
+          *data = Atomic_Server_deflate(*request,*Data,MemorySize(*data)) 
+        EndIf   
+        FileLength = MemorySize(*data) 
+        If *request\Type = #ATOMIC_SERVER_HEAD
+          *request\status = 100    
+          *FileBuffer  = AllocateMemory(8192)
+          *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
+          fulllen = *BufferOffset - *FileBuffer
+          Atomic_Server_send(*request,*FileBuffer,fulllen) 
+          FreeMemory(*FileBuffer)
+          FreeMemory(*data) 
           ProcedureReturn #True 
-        EndIf
-      EndIf 
-    EndIf        
-  EndIf 
+        ElseIf (*request\Type = #ATOMIC_SERVER_GET Or *request\Type = #ATOMIC_SERVER_POST)  
+          *request\status = 200   
+          *FileBuffer   = AllocateMemory(FileLength + 8192)
+          *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
+          CopyMemory(*data,*BufferOffset,FileLength)
+          outpos = 0
+          fulllen = *BufferOffset - *FileBuffer + FileLength
+          Atomic_Server_Send(*request,*filebuffer,fulllen)
+          FreeMemory(*FileBuffer)
+          FreeMemory(*data)  
+          If outpos >= fulllen
+            ProcedureReturn #True 
+          EndIf
+        EndIf 
+      EndIf        
+      
+    EndIf 
+   
+  Next   
+  
 EndProcedure  
 
 Procedure Atomic_Server_GetCookies(*request.Atomic_Server_Request) ;internal function retrives cookies 
@@ -914,6 +972,7 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
     *Atomic_Client\timeout = ElapsedMilliseconds() + *Atomic_Server\timeout  
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
+      SetLinger(ConnectionID(con),1,0)
       If SendNetworkString(con,*request\Request,#PB_UTF8) 
         Repeat
           Delay(1)
@@ -1097,6 +1156,16 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
                 EndIf   
               EndIf 
             Else
+              If count > 0  ;if there are parameters call post or get callbacks 
+                If atomic_request\type = #ATOMIC_SERVER_POST
+                  If *Atomic_Server\pCBPost 
+                    *Atomic_Server\pCBPost(@atomic_request)
+                  EndIf
+                ElseIf *Atomic_Server\pCBGet 
+                  *Atomic_Server\pCBGet(@atomic_request) 
+                EndIf   
+              EndIf 
+                           
               If Atomic_Server_ProcessURIRequest(*Atomic_Server,@atomic_request,atomic_request\RequestedFile) <> #True ;check for urihandelr 
                 If Atomic_Server_ProcessURIRequest(*Atomic_Server,@atomic_request,"error") <> #True                    ;check for built in error handler  
                   fn = ReadFile(-1, *Atomic_Server\WWWDirectory + *Atomic_Server\WWWError, #PB_UTF8 | #PB_File_SharedRead) ;fallback to file 
@@ -1129,7 +1198,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
               EndIf   
               FileLength = MemorySize(*output)
               If atomic_request\type = #ATOMIC_SERVER_HEAD
-                atomic_request\status = 100    
+                atomic_request\status = 200    
                 *FileBuffer  = AllocateMemory(8192)
                 *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress,0)
                 FileLength = 0 
@@ -1159,7 +1228,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
                 
                 FileLength = MemorySize(*output)
                 If atomic_request\type = #ATOMIC_SERVER_HEAD
-                  atomic_request\status = 100    
+                  atomic_request\status = 200    
                   *FileBuffer  = AllocateMemory(8192)
                   *BufferOffset = Atomic_Server_BuildRequestHeader(@atomic_request,*FileBuffer, FileLength, ContentType,atomic_request\status,atomic_request\bcompress)
                   FileLength = 0 
@@ -1189,7 +1258,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
       
     EndIf 
     
-  Until *Atomic_Client\kill And ListSize(*Atomic_Client\requests()) = 0
+  Until *Atomic_Client\kill ;And ListSize(*Atomic_Client\requests()) = 0
   
   *Atomic_Client\done = 1
   
@@ -1561,19 +1630,19 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_Server\maxclients = maxclients
     *Atomic_Server\BufferSize = 65536
     *atomic_server\UploadSize = 10*1024*1024
-    *Atomic_server\timeout = 10000 
+    *Atomic_server\timeout = 360 * 1000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
     *atomic_server\CacheAge = CacheAge 
     *atomic_server\mux = CreateMutex() 
-    *Atomic_Server\URIHandlers("error")\pt = @*Atomic_Server_Error() 
+    *Atomic_Server\URIHandlers("error")\pt = @Atomic_Server_Error() 
     
     If domain = "" 
-      *Atomic_Server\URIHandlers("index")\pt = @*Atomic_Server_Index() 
-      *Atomic_Server\URIHandlers("favicon.ico")\pt = @*Atomic_Server_favicon()   
+      *Atomic_Server\URIHandlers("index")\pt = @Atomic_Server_Index() 
+      *Atomic_Server\URIHandlers("favicon.ico")\pt = @Atomic_Server_favicon()   
     Else 
-      *Atomic_Server\URIHandlers(domain + "/index")\pt = @*Atomic_Server_Index()
-      *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @*Atomic_Server_favicon() 
+      *Atomic_Server\URIHandlers(domain + "/index")\pt = @Atomic_Server_Index()
+      *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @Atomic_Server_favicon() 
     EndIf 
     
     Atomic_Server_Init_MimeTypess(*atomic_server) 
@@ -1587,6 +1656,7 @@ Procedure Atomic_Server_Init_TLS(server,path.s,domain.s,CertFile.s,KeyFile.s,CaC
   *atomic_server\CaCertFile = path + domain + "/" + CaCertFile  
   *atomic_server\KeyFile = path + domain + "/" + KeyFile 
   *atomic_server\CertFile = path + domain + "/" + CertFile 
+  
   Init_TLS(domain,*atomic_server\CertFile,*atomic_server\KeyFile,*atomic_server\CaCertFile,path) 
 EndProcedure  
 
