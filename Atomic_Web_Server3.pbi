@@ -1,7 +1,7 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b12
-;Authors Idle, Fantaisie Software
+;Version 3.1.0b13 PB6.03 - PB6.20 
+;Authors Idle
 ;Licence MIT
 ;Supports GET POST HEAD
 ;URIhandler with parameters for get or post
@@ -22,7 +22,13 @@ CompilerEndIf
 ;-Optional includes 
 #USETLS = 1 
 CompilerIf #USETLS 
-  XIncludeFile "tls.pbi" 
+  
+  CompilerIf #PB_Compiler_Version <= 612
+    XIncludeFile "tls.pbi" 
+  CompilerElse
+    XIncludeFile "tlsstatic.pbi" 
+  CompilerEndIf   
+    
 CompilerEndIf   
 
 #USEEZPACK =1 
