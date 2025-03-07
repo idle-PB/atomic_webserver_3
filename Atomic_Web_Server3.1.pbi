@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.1b1  PB 6.20 
+;Version 3.1.1b2  PB 6.20 
 ;note reverse proxy doesn't work with 6.20 and you don't need the dlls  
 
 ;Authors Idle
@@ -444,6 +444,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
   EndIf 
   
   If atomicserver
+         
 ;     CompilerIf #PB_Compiler_OS = #PB_OS_Windows  
 ;       TCPNoDelay(ServerID(atomicserver),1)
 ;       SetLinger(ServerID(atomicserver),1,0) 
@@ -748,7 +749,7 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
   Protected   outpos,trylen,sendlen,sendtimeout
   
-  sendtimeout = ElapsedMilliseconds() + 5000
+  sendtimeout = ElapsedMilliseconds() + 15000
   Repeat
     
     trylen = len - outpos
@@ -768,7 +769,7 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     If sendlen > 0
       outpos + sendlen
       sendlen = 0 
-      sendtimeout = ElapsedMilliseconds() + 5000
+      sendtimeout = ElapsedMilliseconds() + 15000
     ElseIf Atomic_Server_NetworkErrorContinue(*atomic_client\id) 
       Delay(10) 
     Else 
@@ -780,7 +781,7 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     Delay(1) 
      
   Until (outpos >= len Or *atomic_client\kill) 
-   *atomic_client\timeout + 5000  
+   *atomic_client\timeout + 15000  
 EndProcedure   
 
 Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,Requestfile.s) 
@@ -878,11 +879,12 @@ Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;inter
   Protected pos,ct,a,line.s,key.s,val.s 
   Protected *client.Atomic_Server_Client = *request\clientID  
   
+  LockMutex(*client\lock) 
   ct = CountString(*request\Request,#CRLF$) 
   For a = 1 To ct 
     line.s = StringField(*request\request,a,#CRLF$) 
     pos = FindString(line,": ") 
-    LockMutex(*client\lock) 
+   
     If pos 
       If MatchRegularExpression(*client\regex,line) 
         key.s = StringField(line,1,": ") 
@@ -898,9 +900,9 @@ Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;inter
         EndIf 
       EndIf    
     EndIf 
-    UnlockMutex(*client\lock) 
-  Next     
   
+  Next     
+  UnlockMutex(*client\lock) 
 EndProcedure  
 
 Procedure Atomic_Server_SetResponceHeader(*request.Atomic_Server_Request,key.s,value.s) ;faciltates adding custom header fields 
@@ -1635,18 +1637,18 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_Server\maxclients = maxclients
     *Atomic_Server\BufferSize = 65536
     *atomic_server\UploadSize = 10*1024*1024
-    *Atomic_server\timeout = 10000 
+    *Atomic_server\timeout = 360 * 1000 
     *Atomic_Server\pCBPost = *pCBPost    ;set this to a callback to get POST parameters 
     *Atomic_Server\pCBGet = *pCBGet 
     *atomic_server\CacheAge = CacheAge 
     *atomic_server\mux = CreateMutex() 
     *Atomic_Server\URIHandlers("error")\pt = @Atomic_Server_Error() 
     
-    If domain = "" 
-      *Atomic_Server\URIHandlers("index")\pt = @Atomic_Server_Index() 
+     If domain = "" 
+      *Atomic_Server\URIHandlers("index.html")\pt = @Atomic_Server_Index() 
       *Atomic_Server\URIHandlers("favicon.ico")\pt = @Atomic_Server_favicon()   
     Else 
-      *Atomic_Server\URIHandlers(domain + "/index")\pt = @Atomic_Server_Index()
+      *Atomic_Server\URIHandlers(domain + "/index.html")\pt = @Atomic_Server_Index()
       *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @Atomic_Server_favicon() 
     EndIf 
     
@@ -1699,7 +1701,7 @@ Procedure Atomic_Server_Init_TLS(server,path.s,domain.s,CertFile.s,KeyFile.s,CaC
   Debug *atomic_server\CertFile
     
   UseNetworkTLS(*atomic_server\KeyFile,*atomic_server\CertFile,*atomic_server\CaCertFile)
-
+    
   CallDebugger 
   ;Init_TLS(domain,*atomic_server\CertFile,*atomic_server\KeyFile,*atomic_server\CaCertFile,path) 
 EndProcedure  
