@@ -382,7 +382,7 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
   *Atomic_server\MimeTypes("asf") = "video/x-ms-asf"
   *Atomic_server\MimeTypes("avi") = "video/x-msvideo"
   *Atomic_server\MimeTypes("m4v") = "video/x-m4v"
-  *Atomic_server\MimeTypes("mvt") = "application/vnd.mapbox-vector-tile"
+  *Atomic_server\MimeTypes("mvt") = "application/x-protobuf" 
   
 EndProcedure 
 
@@ -1317,6 +1317,9 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   EndIf   
   
   Length = PokeS(*FileBuffer, "Server: "+ *Atomic_Server\DomainAlias + #CRLF$, -1, #PB_UTF8)
+  *FileBuffer + Length
+  
+  Length = PokeS(*FileBuffer, "Access-Control-Allow-Origin: *" + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   
   ForEach *client\ResponseHeaders() 
