@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b13 PB6.03 - PB6.20 
+;Version 3.1.0b14 PB6.03 + PB6.20   
 ;Authors Idle
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -19,6 +19,24 @@ CompilerIf Not #PB_Compiler_Thread
   End 
 CompilerEndIf  
 
+; Procedure _AllocateMemory(size) 
+;   
+;   Protected *mem 
+;   *mem = AllocateMemory(size) 
+;   If *mem 
+;     ProcedureReturn *mem 
+;   Else 
+;     MessageRequester("Atomic web server", "failed To allocate memory " + Str(size) + "bytes") 
+;     End  
+;   EndIf   
+;    
+; EndProcedure
+; 
+;  Macro AllocateMemory(size) 
+;    _AllocateMemory(size) 
+;  EndMacro   
+
+;-Optional includes 
 ;-Optional includes 
 #USETLS = 1 
 CompilerIf #USETLS 
@@ -262,6 +280,7 @@ Procedure Atomic_Server_NetworkErrorContinue(ID)
   Select option 
     Case 0 
       ret = 1
+       Debug "None"
     Case  #WSAEWOULDBLOCK  
       ret = 1 
       Debug "#WSAEWOULDBLOCK"
@@ -385,7 +404,8 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
   *Atomic_server\MimeTypes("asf") = "video/x-ms-asf"
   *Atomic_server\MimeTypes("avi") = "video/x-msvideo"
   *Atomic_server\MimeTypes("m4v") = "video/x-m4v"
-  *Atomic_server\MimeTypes("mvt") = "application/vnd.mapbox-vector-tile"
+  *Atomic_server\MimeTypes("mvt") = "application/x-protobuf"
+  *Atomic_server\MimeTypes("json") = "application/json"  
   
 EndProcedure 
 
@@ -482,6 +502,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                 *Atomic_server\ClientCount+1 
                 PrintN("connect " + Str(clientid))  
               Else 
+                PrintN("Not a client") 
                 CloseNetworkConnection(clientid) 
               EndIf 
             EndIf 
@@ -490,7 +511,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
           MaxRequest = 0 
           request.s = "" 
           ClientID = EventClient()  
-          timeout = ElapsedMilliseconds() + 1000
+          timeout = ElapsedMilliseconds() + 15000
           *buffer = AllocateMemory(*atomic_server\BufferSize) 
           Result = ReceiveNetworkData(ClientID, *Buffer, *atomic_server\BufferSize)
           If Result > 0   
@@ -514,7 +535,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
                 Result = ReceiveNetworkData(CLientid,*Buffer+MaxRequest,*atomic_server\BufferSize)
                 If result > 0; -1   
                   MaxRequest + result
-                  timeout = ElapsedMilliseconds() + 1000 
+                  timeout = ElapsedMilliseconds() + 15000 
                 ElseIf ElapsedMilliseconds() > timeout  
                   PrintN("receive Data time out") 
                   MaxRequest=0
@@ -750,8 +771,8 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
   Protected  *atomic_server.Atomic_Server = *request\Serverid  
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
   Protected   outpos,trylen,sendlen,sendtimeout
-  
-  sendtimeout = ElapsedMilliseconds() + 5000
+    
+  sendtimeout = ElapsedMilliseconds() + 15000
   Repeat
     
     trylen = len - outpos
@@ -771,19 +792,20 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
     If sendlen > 0
       outpos + sendlen
       sendlen = 0 
-      sendtimeout = ElapsedMilliseconds() + 5000
+      sendtimeout = ElapsedMilliseconds() + 15000
     ElseIf Atomic_Server_NetworkErrorContinue(*atomic_client\id) 
       Delay(10) 
     Else 
-      Break 
+      ProcedureReturn #False
     EndIf 
     If ElapsedMilliseconds() > sendtimeout
-      Break    
+      ProcedureReturn #False    
     EndIf 
     Delay(1) 
      
   Until (outpos >= len Or *atomic_client\kill) 
-   *atomic_client\timeout + 5000  
+  *atomic_client\timeout + 15000 
+  ProcedureReturn #True 
 EndProcedure   
 
 Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,Requestfile.s) 
@@ -792,9 +814,11 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   Protected outpos,fulllen,trylen,sendlen
   Protected  *atomic_server.Atomic_Server = server 
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
-  Protected  a,pos,x,ts$  
+  Protected  a,pos,x,ts$,result  
   
   Protected  NewList uris.s() 
+  AddElement(uris())  
+  uris() = Requestfile
   
   x = CountString(Requestfile,"/")+1 
   ts$ = StringField(Requestfile,1,"/") 
@@ -809,8 +833,7 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
   ForEach uris() 
         
     If FindMapElement(*Atomic_Server\URIHandlers(),uris())
-      Debug uris() 
-      
+           
       *data = *Atomic_Server\URIHandlers()\pt(*request)
       If *data 
         If *request\bcompress 
@@ -822,10 +845,10 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
           *FileBuffer  = AllocateMemory(8192)
           *BufferOffset = Atomic_Server_BuildRequestHeader(*request,*FileBuffer, FileLength, *request\ContentType,*request\status,*request\bcompress,0) 
           fulllen = *BufferOffset - *FileBuffer
-          Atomic_Server_send(*request,*FileBuffer,fulllen) 
+          result = Atomic_Server_send(*request,*FileBuffer,fulllen) 
           FreeMemory(*FileBuffer)
           FreeMemory(*data) 
-          ProcedureReturn #True 
+          ProcedureReturn result  
         ElseIf (*request\Type = #ATOMIC_SERVER_GET Or *request\Type = #ATOMIC_SERVER_POST)  
           *request\status = 200   
           *FileBuffer   = AllocateMemory(FileLength + 8192)
@@ -833,13 +856,13 @@ Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,
           CopyMemory(*data,*BufferOffset,FileLength)
           outpos = 0
           fulllen = *BufferOffset - *FileBuffer + FileLength
-          Atomic_Server_Send(*request,*filebuffer,fulllen)
+          result = Atomic_Server_Send(*request,*filebuffer,fulllen)
           FreeMemory(*FileBuffer)
           FreeMemory(*data)  
-          If outpos >= fulllen
-            ProcedureReturn #True 
-          EndIf
+          ProcedureReturn result 
+          
         EndIf 
+                
       EndIf        
       
     EndIf 
@@ -880,11 +903,12 @@ Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;inter
   Protected pos,ct,a,line.s,key.s,val.s 
   Protected *client.Atomic_Server_Client = *request\clientID  
   
+  LockMutex(*client\lock) 
   ct = CountString(*request\Request,#CRLF$) 
   For a = 1 To ct 
     line.s = StringField(*request\request,a,#CRLF$) 
     pos = FindString(line,": ") 
-    LockMutex(*client\lock) 
+   
     If pos 
       If MatchRegularExpression(*client\regex,line) 
         key.s = StringField(line,1,": ") 
@@ -900,22 +924,22 @@ Procedure Atomic_Server_GetRequestHeaders(*request.Atomic_Server_Request) ;inter
         EndIf 
       EndIf    
     EndIf 
-    UnlockMutex(*client\lock) 
-  Next     
   
+  Next     
+  UnlockMutex(*client\lock) 
 EndProcedure  
 
 Procedure Atomic_Server_SetResponceHeader(*request.Atomic_Server_Request,key.s,value.s) ;faciltates adding custom header fields 
   
   Protected *client.Atomic_Server_Client = *request\clientID   
-  LockMutex(*client\lock) 
+  ;LockMutex(*client\lock) 
   If FindMapElement(*client\ResponseHeaders(),key) 
     *client\ResponseHeaders() = value  
   Else 
     AddMapElement(*client\ResponseHeaders(),key)  
     *client\ResponseHeaders() = value   
   EndIf   
-  UnlockMutex(*client\lock)  
+  ;UnlockMutex(*client\lock)  
   
 EndProcedure   
 
@@ -940,7 +964,7 @@ Procedure Atomic_Server_GetParameters(*request.Atomic_Server_Request)
     While *p\u > 32  
       Select *p\u 
         Case '&',' ' 
-          *request\parameters() = Mid(*Request\Request,Position,Position1) ;add value to map
+          *request\parameters() = URLDecoder(Mid(*Request\Request,Position,Position1)) ;add value to map
           Position+Position1+1
           Position1 = 0 
           If *p\u = ' ' 
@@ -948,7 +972,7 @@ Procedure Atomic_Server_GetParameters(*request.Atomic_Server_Request)
           EndIf 
           *p+2
         Case '=' 
-          AddMapElement(*request\parameters(),Mid(*Request\Request,Position,Position1)) ;add key to map
+          AddMapElement(*request\parameters(),URLDecoder(Mid(*Request\Request,Position,Position1))) ;add key to map
           count +1 
           Position+Position1+1
           Position1 = 0
@@ -958,7 +982,7 @@ Procedure Atomic_Server_GetParameters(*request.Atomic_Server_Request)
       Position1+1
     Wend 
     If count > 0 
-      *request\parameters() = Mid(*Request\Request,Position,Position1) ;add remaning value to map 
+      *request\parameters() = URLDecoder(Mid(*Request\Request,Position,Position1)) ;add remaning value to map 
     EndIf 
   EndIf     
   ProcedureReturn count 
@@ -970,12 +994,14 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
   Protected *Atomic_Server.Atomic_Server = *request\serverid 
   Protected *Atomic_Client.Atomic_Server_Client = *request\clientID 
   Protected *buffer ,pos,epos,head.s,ContentLen,MaxRequest 
-  Protected result,con,sendlen,success,len 
+  Protected result,con,sendlen,success,len,timeout 
   Protected st = ElapsedMilliseconds() 
+  
+      
   LockMutex(*atomic_client\lock) 
   If FindMapElement(*Atomic_Server\proxy(),*request\host) 
     
-    *Atomic_Client\timeout = ElapsedMilliseconds() + *Atomic_Server\timeout  
+    timeout = ElapsedMilliseconds() + 15000
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
       SetLinger(ConnectionID(con),1,0)
@@ -983,7 +1009,7 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
         Repeat
           Delay(1)
         Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data And ElapsedMilliseconds() < *Atomic_Client\Timeout)
-        *Atomic_Client\timeout = ElapsedMilliseconds() + 5000
+        timeout = ElapsedMilliseconds() + 15000
         *buffer = AllocateMemory(*atomic_server\BufferSize) 
         Result = ReceiveNetworkData(con, *Buffer, *atomic_server\BufferSize)
         If Result > 0  
@@ -1007,8 +1033,8 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
               Result = ReceiveNetworkData(con,*Buffer+MaxRequest,*atomic_server\BufferSize)
               If result > 0   
                 MaxRequest + result
-                *Atomic_Client\timeout = ElapsedMilliseconds() + 5000
-              ElseIf ElapsedMilliseconds() > *Atomic_Client\timeout  
+                timeout = ElapsedMilliseconds() + 15000
+              ElseIf ElapsedMilliseconds() > timeout  
                 Break 
               ElseIf Atomic_Server_NetworkErrorContinue(con)   
                 Delay(10) 
@@ -1019,9 +1045,10 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
           EndIf   
         EndIf  
         If MaxRequest > 0     
-          Atomic_Server_Send(*request,*buffer,MaxRequest,0) 
-          *Atomic_Client\timeout = ElapsedMilliseconds() + 5000
-          success = 1 
+          If  Atomic_Server_Send(*request,*buffer,MaxRequest,0) 
+            *Atomic_Client\timeout + 15000
+            success = 1
+          EndIf 
         EndIf 
         CloseNetworkConnection(con) 
         FreeMemory(*buffer)    
@@ -1053,14 +1080,18 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
     
     If *Atomic_Client\kill = 0
       
-      If TryLockMutex(*Atomic_Client\lock)
-        If FirstElement(*Atomic_Client\Requests())
-          CopyStructure(@*Atomic_Client\Requests(),@atomic_request,Atomic_Server_Request)
-          DeleteElement(*Atomic_Client\Requests())
-        EndIf
-        UnlockMutex(*Atomic_Client\lock)
-      EndIf
       
+      If TryLockMutex(*Atomic_Client\lock)
+        If ListSize(*Atomic_Client\Requests())
+          If FirstElement(*Atomic_Client\Requests())
+            CopyStructure(@*Atomic_Client\Requests(),@atomic_request,Atomic_Server_Request)
+            DeleteElement(*Atomic_Client\Requests())
+          EndIf
+        EndIf 
+        UnlockMutex(*Atomic_Client\lock)
+         
+      EndIf
+           
       request.s = URLDecoder(atomic_request\Request)
       type.s = Left(request,4)   
       If FindString(type,"GET",1)
@@ -1109,6 +1140,8 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
           Else     
             atomic_request\RequestedFile = RequestedFile 
           EndIf   
+          
+          atomic_request\RequestedFile = ReplaceString(atomic_request\RequestedFile,"//","/")
           
           If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
             
@@ -1319,6 +1352,9 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   Length = PokeS(*FileBuffer, "Server: "+ *Atomic_Server\DomainAlias + #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
   
+   Length = PokeS(*FileBuffer, "Access-Control-Allow-Origin: *" + #CRLF$, -1, #PB_UTF8)
+   *FileBuffer + Length
+  
   ForEach *client\ResponseHeaders() 
     line = MapKey(*client\ResponseHeaders()) + ": " + *client\ResponseHeaders() +  #CRLF$ 
     Length = PokeS(*FileBuffer,line,-1, #PB_UTF8)
@@ -1344,7 +1380,7 @@ Procedure Atomic_Server_BuildRequestHeader(*request.Atomic_Server_Request,*FileB
   EndIf   
   Length = PokeS(*FileBuffer, #CRLF$, -1, #PB_UTF8)
   *FileBuffer + Length
-  
+    
   ProcedureReturn *FileBuffer
   
 EndProcedure
@@ -1498,6 +1534,8 @@ Procedure Atomic_Server_ErrorHandler()
   
 EndProcedure
 
+;OnErrorCall(@Atomic_Server_ErrorHandler())
+
 ;-Public fumctions 
 
 Procedure.s Atomic_Server_Chr(v.i) ;return a proper surrogate pair for unicode values outside the BMP (Basic Multilingual Plane)
@@ -1525,7 +1563,7 @@ Procedure.s Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,valu
     FreeMemory(*data)
   EndIf   
   
-  LockMutex(*client\lock) 
+  ;LockMutex(*client\lock) 
   If FindMapElement(*client\Cookies(),cookie) 
     If maxage = 0
       *client\Cookies() = value  
@@ -1540,7 +1578,7 @@ Procedure.s Atomic_Server_SetCookie(*request.Atomic_Server_Request,Cookie.s,valu
       *client\Cookies() = value + "; Max-Age=" + Str(maxage) 
     EndIf
   EndIf   
-  UnlockMutex(*client\lock) 
+  ;UnlockMutex(*client\lock) 
   
   ProcedureReturn value 
   
@@ -1549,11 +1587,11 @@ EndProcedure
 Procedure Atomic_Server_DeleteCookie(*request.Atomic_Server_Request,Cookie.s)
   
    Protected *client.Atomic_Server_Client = *request\clientID   
-   LockMutex(*client\lock) 
+   ;LockMutex(*client\lock) 
    If FindMapElement(*client\Cookies(),cookie) 
       *client\Cookies() = "0; Max-Age=0" 
    EndIf   
-   UnlockMutex(*client\lock)  
+   ;UnlockMutex(*client\lock)  
    
 EndProcedure   
 
@@ -1644,10 +1682,10 @@ Procedure Atomic_Server_Init(title.s,wwwDirectory.s,IP.s="127.0.0.1",domain.s=""
     *Atomic_Server\URIHandlers("error")\pt = @Atomic_Server_Error() 
     
     If domain = "" 
-      *Atomic_Server\URIHandlers("index")\pt = @Atomic_Server_Index() 
+      *Atomic_Server\URIHandlers("index.html")\pt = @Atomic_Server_Index() 
       *Atomic_Server\URIHandlers("favicon.ico")\pt = @Atomic_Server_favicon()   
     Else 
-      *Atomic_Server\URIHandlers(domain + "/index")\pt = @Atomic_Server_Index()
+      *Atomic_Server\URIHandlers(domain + "/index.html")\pt = @Atomic_Server_Index()
       *Atomic_Server\URIHandlers(domain + "/favicon.ico")\pt = @Atomic_Server_favicon() 
     EndIf 
     
