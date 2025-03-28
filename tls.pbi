@@ -90,11 +90,13 @@ CompilerIf Defined(PB_Network_TLSv1, #PB_Constant) = 0
   #PB_Network_TLSv1_1     = $20
   #PB_Network_TLSv1_2     = $40
   #PB_Network_TLSv1_3     = $80
+    
   #PB_Network_TLSv1       = #PB_Network_TLSv1_0 | #PB_Network_TLSv1_1 | #PB_Network_TLSv1_2 | #PB_Network_TLSv1_3
+CompilerEndIf     
   #PB_Network_TLS_DEFAULT = #PB_Network_TLSv1_2 | #PB_Network_TLSv1_3
   #PB_Network_KeepAlive   = $1000
   #PB_Network_Extra       = #PB_Network_TLSv1 | #PB_Network_KeepAlive
-CompilerEndIf
+;CompilerEndIf
 
 CompilerIf Defined(TLS_AUTOINIT, #PB_Constant) = #False
   #TLS_AUTOINIT = #True
@@ -435,7 +437,7 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
       EndIf 
       
       If *ctx 
-        Mode   = Mode & ($FFFFFFFF - #PB_Network_Extra)
+        Mode = Mode & ($FFFFFFFF - #PB_Network_Extra)
         ServerID = CreateNetworkServer(Server, Port, mode, BindedIP)
         If ServerID
           Protected iocontext   
@@ -456,6 +458,7 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
       TLSG\LastError = #TLS_Error_Cant_Start_Server
     EndIf
   Else
+    mode = #PB_Network_IPv4 | #PB_Network_TCP
     ServerID = CreateNetworkServer(Server, Port, Mode, BindedIP)
   EndIf
   
@@ -626,8 +629,8 @@ Procedure TLS_SendNetworkData(ClientID, Buffer, Length)
   LockMutex(TLSG\muxClient) 
   
   *client = FindMapElement(TLSG\Clients(), Str(ClientID))
-  
-  If *client   
+   
+  If *client <> 0   
     Result = tls_write(*client\ctx, Buffer, Length)
   Else
     Result = SendNetworkData(ClientID, Buffer, Length)

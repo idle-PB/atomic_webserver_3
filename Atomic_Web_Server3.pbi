@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b14 PB6.03 + PB6.20   
+;Version 3.1.0b15 PB6.03 + PB6.20   
 ;Authors Idle
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -19,24 +19,6 @@ CompilerIf Not #PB_Compiler_Thread
   End 
 CompilerEndIf  
 
-; Procedure _AllocateMemory(size) 
-;   
-;   Protected *mem 
-;   *mem = AllocateMemory(size) 
-;   If *mem 
-;     ProcedureReturn *mem 
-;   Else 
-;     MessageRequester("Atomic web server", "failed To allocate memory " + Str(size) + "bytes") 
-;     End  
-;   EndIf   
-;    
-; EndProcedure
-; 
-;  Macro AllocateMemory(size) 
-;    _AllocateMemory(size) 
-;  EndMacro   
-
-;-Optional includes 
 ;-Optional includes 
 #USETLS = 1 
 CompilerIf #USETLS 
@@ -251,35 +233,62 @@ CompilerIf #PB_Compiler_OS = #PB_OS_Windows
   EndProcedure 
 CompilerEndIf   
 
-Procedure Atomic_Server_NetworkErrorContinue(ID) 
-  Protected ret,option.l,oplen.l=4 
+;-Extra functions 
+#PB_Network_Error_Fatal = -1 
+#PB_Network_Error_timeout = -2 
+#PB_Network_Error_Dropped = -3 
+#PB_Network_Error_Memory = -4 
+
+Procedure Atomic_Server_NetworkErrorContinue(ID,val=0) 
+  Protected ret,error.l
   
   #WSA_IO_INCOMPLETE = 996
   #WSA_IO_PENDING = 997
-  #WSAEINTR = 10004
-  #WSAEMFILE = 10024
-  #WSAEWOULDBLOCK = 10035
-  #WSAEINPROGRESS = 10036
-  #WSAEALREADY = 10037
   
-  #_WANT_POLLIN  = -2
-  #_WANT_POLLOUT = -3
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows 
+    #WSA_IO_INCOMPLETE = 996
+    #WSA_IO_PENDING = 997
+    #WSAEINTR = 10004
+    #WSAEMFILE = 10024
+    #WSAEWOULDBLOCK = 10035
+    #WSAEINPROGRESS = 10036
+    #WSAEALREADY = 10037
+  CompilerElse 
+    #WSAEINTR = 4 ;EINTR 
+    #WSAEMFILE = 17 ;2  ;ENOFILE ENOENT 2 
+    #WSAEWOULDBLOCK = 11 ;Eagain  
+    #WSAEINPROGRESS = 115 ;EINPROGRESS
+    #WSAEALREADY = 114   ;EALREADY 
+  CompilerEndIf 
+   
+  
+  #TLS_WANT_POLLIN  = -2
+  #TLS_WANT_POLLOUT = -3
     
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows 
-    option = WSAGetLastError_()
+    error = WSAGetLastError_()
   CompilerElse 
     CompilerIf #PB_Compiler_Backend = #PB_Backend_C
       !#include "errno.h"
       !extern int errno;
-      !v_option=errno;
+      !v_error=errno;
     CompilerElse
-      option = PeekL(__errno_location()) 
+      error = PeekL(__errno_location()) 
     CompilerEndIf 
   CompilerEndIf
-    
-  Select option 
+  
+  If val = #TLS_WANT_POLLIN
+     Debug "#TLS_WANT_POLLIN"
+    ProcedureReturn  1
+  EndIf   
+  If val = #TLS_WANT_POLLOUT  
+     Debug "#TLS_WANT_POLLOUT"
+    ProcedureReturn 1 
+  EndIf   
+  
+  Select error 
     Case 0 
-      ret = 1
+      ret = 0
        Debug "None"
     Case  #WSAEWOULDBLOCK  
       ret = 1 
@@ -299,19 +308,207 @@ Procedure Atomic_Server_NetworkErrorContinue(ID)
     Case  #WSAEMFILE 
       ret =1 
       Debug "#WSAEMFILE"
-    Case #_WANT_POLLIN
-      ret =1 
-       Debug "#TLS_WANT_POLLIN"
-    Case #_WANT_POLLOUT 
-      ret = 1 
-      Debug "#TLS_WANT_POLLOUT"
     Default 
-      Debug option   
+      Debug error   
   EndSelect   
   
   ProcedureReturn ret 
   
 EndProcedure  
+
+Procedure Atomic_server_PeekMessage(clientid) 
+  
+  Protected *buffer = AllocateMemory(8096)   
+  Protected timeout = ElapsedMilliseconds() + 5000 
+  Protected result, message.s 
+  Repeat 
+    
+    result = ReceiveNetworkData(clientid,*buffer,8096); 
+    If result < 0 
+      If Atomic_Server_NetworkErrorContinue(clientid) 
+        Delay(10)
+        Continue 
+      Else 
+        FreeMemory(*buffer)
+        ProcedureReturn 0 
+      EndIf   
+    ElseIf result = 0 
+      FreeMemory(*buffer) 
+      ProcedureReturn 0 
+    Else   
+      message.s = URLDecoder(PeekS(*buffer,1024,#PB_UTF8 | #PB_ByteLength))
+      Debug message
+      If FindString(message,"GET") Or FindString(message,"HEAD") Or FindString(message,"POST") 
+        ProcedureReturn *buffer 
+      EndIf   
+    EndIf  
+  Until ElapsedMilliseconds() > timeout 
+    
+EndProcedure   
+
+Procedure Atomic_Server_ReceiveNetworkDataEx(clientId,len,timeout=15000,mutex=0,*error.Integer=0) 
+  
+  Protected result,recived,recvTimeout,tlen,bfirst=1
+  
+  If len > 0 
+    Protected *buffer = AllocateMemory(len)
+    If *buffer 
+      
+      recvTimeout=ElapsedMilliseconds()+timeout   
+      
+      Repeat
+        If result > 0
+           *buffer = ReAllocateMemory(*buffer, recived + len) 
+        EndIf 
+        If *buffer 
+          If mutex 
+            Repeat 
+              If TryLockMutex(mutex)
+                Result = ReceiveNetworkData(clientId,*buffer+recived, len) 
+                If result < 0 
+                  If Atomic_Server_NetworkErrorContinue(clientId,result) 
+                    Delay(10)
+                  Else 
+                    
+                    UnlockMutex(mutex)
+                    FreeMemory(*buffer)
+                    If *error 
+                      *error\i = #PB_Network_Error_Fatal
+                    EndIf   
+                    ProcedureReturn 0
+                  EndIf 
+                EndIf   
+                UnlockMutex(mutex) 
+               
+                Break 
+              Else 
+                Delay(10)
+              EndIf   
+            Until  ElapsedMilliseconds() > recvTimeout  
+          Else       
+            Result = ReceiveNetworkData(clientId,*buffer+recived, len)
+            If result < 0 
+              If Atomic_Server_NetworkErrorContinue(clientId,result) 
+                Delay(10)
+                Continue 
+              Else 
+                FreeMemory(*buffer)
+                If *error 
+                  *error\i = #PB_Network_Error_Fatal
+                EndIf   
+                Delay(10)
+                ProcedureReturn 0
+              EndIf 
+            EndIf   
+          EndIf   
+          
+          If result > 0 
+            recived+result  
+            recvTimeout = ElapsedMilliseconds() + timeout
+          ElseIf result = 0 
+            FreeMemory(*buffer)
+            If *error 
+              *error\i = #PB_Network_Error_Dropped 
+            EndIf   
+            ProcedureReturn 0
+          EndIf   
+        Else 
+          If *error 
+            *error\i = #PB_Network_Error_Memory 
+          EndIf   
+          ProcedureReturn 0
+        EndIf   
+        
+        If ElapsedMilliseconds() > recvTimeout    
+          FreeMemory(*buffer)
+          If *error 
+            *error\i = #PB_Network_Error_timeout 
+          EndIf   
+          ProcedureReturn 0
+        EndIf 
+        Delay(0) 
+      Until result <> len   
+      
+      ProcedureReturn *buffer
+      
+    EndIf 
+  EndIf 
+  
+EndProcedure   
+
+Procedure Atomic_Server_SendNetworkDataEX(clientId,*buffer,len,timeout=15000,mutex=0,*error.Integer=0) 
+  
+  Protected  totalSent,tryLen,sendLen,sendTimeout
+  
+  sendTimeout = ElapsedMilliseconds() + timeout
+  Repeat
+    
+    tryLen = len - totalSent
+    If tryLen > len 
+      tryLen = len 
+    EndIf
+    If mutex 
+      Repeat 
+        If TryLockMutex(mutex)  
+          sendLen = SendNetworkData(clientId, *Buffer+totalSent,tryLen)
+          If sendLen < 0 
+            If Atomic_Server_NetworkErrorContinue(clientId,sendLen) 
+              Delay(10) 
+            Else 
+            If *error 
+               *error\i = #PB_Network_Error_Fatal
+            EndIf   
+             Debug Str(totalsent) + " " + Str(trylen) + " " + Str(len) 
+             UnlockMutex(mutex)
+             ProcedureReturn 0
+            EndIf 
+          EndIf 
+          UnlockMutex(mutex) 
+          Break 
+        Else 
+          Delay(10)
+        EndIf 
+      Until ElapsedMilliseconds() > sendTimeout 
+    Else 
+      sendLen = SendNetworkData(clientId, *Buffer+totalSent,tryLen)
+      If sendLen < 0 
+        If Atomic_Server_NetworkErrorContinue(clientId,sendLen) 
+          Delay(10) 
+        Else 
+          If *error 
+            *error\i = #PB_Network_Error_Fatal
+          EndIf   
+           Debug Str(totalsent) + " " + Str(trylen) + " " + Str(len) 
+          ProcedureReturn 0
+        EndIf 
+      EndIf 
+    EndIf   
+    
+    If sendLen > 0
+      totalSent + sendLen
+      sendLen = 0 
+      sendTimeout = ElapsedMilliseconds() + timeout
+    ElseIf sendLen = 0 
+      If *error 
+        *error\i = #PB_Network_Error_Dropped  
+      EndIf   
+      ProcedureReturn 0 
+    EndIf 
+    
+    If ElapsedMilliseconds() > sendTimeout
+      If *error 
+        *error\i = #PB_Network_Error_timeout 
+      EndIf   
+      ProcedureReturn 0
+    EndIf 
+    
+    Delay(1) 
+    
+  Until totalSent >= len 
+  
+  ProcedureReturn totalSent 
+  
+EndProcedure   
 
 Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server) 
   ;Ref : https://fr.wikipedia.org/wiki/Type_MIME       
@@ -404,9 +601,8 @@ Procedure Atomic_Server_Init_MimeTypess(*Atomic_server.Atomic_Server)
   *Atomic_server\MimeTypes("asf") = "video/x-ms-asf"
   *Atomic_server\MimeTypes("avi") = "video/x-msvideo"
   *Atomic_server\MimeTypes("m4v") = "video/x-m4v"
-  *Atomic_server\MimeTypes("mvt") = "application/x-protobuf"
-  *Atomic_server\MimeTypes("json") = "application/json"  
-  
+  *Atomic_server\MimeTypescomp("mvt") = "application/x-protobuf"
+   
 EndProcedure 
 
 ;-Declares 
@@ -463,7 +659,6 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
   Else   
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_NetworK_TLS_DEFAULT,*Atomic_server\IP)
-    ;atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer ,*Atomic_server\IP)  
   EndIf 
   
   If atomicserver
@@ -511,48 +706,23 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
           MaxRequest = 0 
           request.s = "" 
           ClientID = EventClient()  
-          timeout = ElapsedMilliseconds() + 15000
-          *buffer = AllocateMemory(*atomic_server\BufferSize) 
-          Result = ReceiveNetworkData(ClientID, *Buffer, *atomic_server\BufferSize)
-          If Result > 0   
-            If result > 500 
-              len = 500 
-            Else 
-              len = result 
-            EndIf   
-            head = URLDecoder(PeekS(*buffer,len,#PB_UTF8 | #PB_ByteLength)) 
-            pos = FindString(head,"Content-Length: ") 
-            If pos 
-              epos = FindString(head,#CRLF$,pos) 
-              ContentLen = Val(Mid(head,pos+16,epos-(pos+16)))-pos 
-            Else 
-              ContentLen=0
-            EndIf 
-            MaxRequest + result 
-            If ContentLen > 0 
-              Repeat 
-                *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
-                Result = ReceiveNetworkData(CLientid,*Buffer+MaxRequest,*atomic_server\BufferSize)
-                If result > 0; -1   
-                  MaxRequest + result
-                  timeout = ElapsedMilliseconds() + 15000 
-                ElseIf ElapsedMilliseconds() > timeout  
-                  PrintN("receive Data time out") 
-                  MaxRequest=0
-                  Break 
-                ElseIf Atomic_Server_NetworkErrorContinue(clientid)    
-                  Delay(1) 
-                Else 
-                  MaxRequest=0
-                  Break 
-                EndIf
-              Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
-            EndIf 
-          EndIf  
+          timeout = ElapsedMilliseconds() + 5000
+                    
+          Protected error 
+          *buffer = Atomic_Server_ReceiveNetworkDataEx(clientid,*atomic_server\BufferSize,5000,0,@error)
+           If *buffer <> 0  
+              MaxRequest = MemorySize(*buffer)
+           Else 
+             Debug "error " + Str(error) 
+           EndIf   
           If (MaxRequest > 0 And MaxRequest < *Atomic_server\UploadSize)  
             Request = PeekS(*Buffer, MaxRequest, #PB_UTF8)
           EndIf 
-          FreeMemory(*buffer)
+          
+          If *buffer <> 0
+            FreeMemory(*buffer)
+          EndIf 
+          
           If FindMapElement(clients(),Str(clientid)) 
             If request <> "" 
               If *Atomic_Server\blog
@@ -597,6 +767,13 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             CloseNetworkConnection(clientid)
             
           EndIf 
+          
+;         Else 
+;             PrintN("Bad Request " + Str(clientid) + " recived " + Str(result))
+;             CloseNetworkConnection(clientid)
+;         EndIf 
+          
+          
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
           If FindMapElement(clients(),Str(clientID))  
@@ -771,41 +948,16 @@ Procedure Atomic_Server_Send(*request.Atomic_Server_Request,*buffer,len,lock=1)
   Protected  *atomic_server.Atomic_Server = *request\Serverid  
   Protected  *atomic_client.Atomic_Server_Client = *request\clientID 
   Protected   outpos,trylen,sendlen,sendtimeout
-    
-  sendtimeout = ElapsedMilliseconds() + 15000
-  Repeat
-    
-    trylen = len - outpos
-    If trylen > *Atomic_Server\BufferSize
-      trylen = *Atomic_Server\BufferSize
-    EndIf
-    
-    Repeat 
-      If TryLockMutex(*atomic_client\lock) 
-        sendlen = SendNetworkData(*atomic_client\id, *Buffer+outpos, trylen)
-        UnlockMutex(*atomic_client\lock)
-        Break 
-      Else  
-        Delay(10)
-      EndIf 
-    Until ElapsedMilliseconds() > sendtimeout
-    If sendlen > 0
-      outpos + sendlen
-      sendlen = 0 
-      sendtimeout = ElapsedMilliseconds() + 15000
-    ElseIf Atomic_Server_NetworkErrorContinue(*atomic_client\id) 
-      Delay(10) 
-    Else 
-      ProcedureReturn #False
-    EndIf 
-    If ElapsedMilliseconds() > sendtimeout
-      ProcedureReturn #False    
-    EndIf 
-    Delay(1) 
-     
-  Until (outpos >= len Or *atomic_client\kill) 
-  *atomic_client\timeout + 15000 
-  ProcedureReturn #True 
+  Protected error 
+  outpos = Atomic_Server_SendNetworkDataEX(*atomic_client\id,*buffer,len,5000,0,@error);*atomic_client\lock) 
+  If outpos > 0 
+    *atomic_client\timeout + 15000 
+    ProcedureReturn #True 
+  Else 
+    Debug error  
+    ProcedureReturn #False   
+  EndIf  
+ 
 EndProcedure   
 
 Procedure Atomic_Server_ProcessURIRequest(server,*request.Atomic_Server_Request,Requestfile.s) 
@@ -996,63 +1148,43 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
   Protected *buffer ,pos,epos,head.s,ContentLen,MaxRequest 
   Protected result,con,sendlen,success,len,timeout 
   Protected st = ElapsedMilliseconds() 
-  
-      
+        
   LockMutex(*atomic_client\lock) 
   If FindMapElement(*Atomic_Server\proxy(),*request\host) 
     
-    timeout = ElapsedMilliseconds() + 15000
+    timeout = ElapsedMilliseconds() + 1500
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
       SetLinger(ConnectionID(con),1,0)
-      If SendNetworkString(con,*request\Request,#PB_UTF8) 
+      Protected error.i
+      Protected *Data = UTF8(*request\Request)
+      If Atomic_Server_SendNetworkDataEX(con,*data,MemorySize(*data),5000,0,@error)  ;SendNetworkString(con,*request\Request,#PB_UTF8) 
         Repeat
           Delay(1)
-        Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data And ElapsedMilliseconds() < *Atomic_Client\Timeout)
+        Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data Or ElapsedMilliseconds() > timeout) 
         timeout = ElapsedMilliseconds() + 15000
-        *buffer = AllocateMemory(*atomic_server\BufferSize) 
-        Result = ReceiveNetworkData(con, *Buffer, *atomic_server\BufferSize)
-        If Result > 0  
-          If result > 500 
-            len = 500 
-          Else 
-            len = result 
-          EndIf   
-          head = URLDecoder(PeekS(*buffer,len,#PB_UTF8 | #PB_ByteLength)) 
-          pos = FindString(head,"Content-Length: ") 
-          If pos 
-            epos = FindString(head,#CRLF$,pos) 
-            ContentLen = Val(Mid(head,pos+16,epos-(pos+16)))-pos 
-          Else 
-            ContentLen=0
-          EndIf 
-          MaxRequest + result 
-          If ContentLen > 0  And MaxRequest <= ContentLen 
-            Repeat 
-              *buffer = ReAllocateMemory(*buffer, MaxRequest + *atomic_server\BufferSize )  
-              Result = ReceiveNetworkData(con,*Buffer+MaxRequest,*atomic_server\BufferSize)
-              If result > 0   
-                MaxRequest + result
-                timeout = ElapsedMilliseconds() + 15000
-              ElseIf ElapsedMilliseconds() > timeout  
-                Break 
-              ElseIf Atomic_Server_NetworkErrorContinue(con)   
-                Delay(10) 
-              Else 
-                Break 
-              EndIf
-            Until (MaxRequest > ContentLen And result <> *atomic_server\BufferSize) 
-          EndIf   
-        EndIf  
-        If MaxRequest > 0     
-          If  Atomic_Server_Send(*request,*buffer,MaxRequest,0) 
+       
+        *buffer = Atomic_Server_ReceiveNetworkDataEx(con,*atomic_server\BufferSize,5000,0,@error)
+        If *buffer <> 0   
+          If  Atomic_Server_Send(*request,*buffer,MemorySize(*buffer),0)
             *Atomic_Client\timeout + 15000
             success = 1
+           Else 
+            Debug "Failed to send" 
           EndIf 
+        Else 
+          Debug "proxy send error " + Str(error) 
+          
         EndIf 
         CloseNetworkConnection(con) 
-        FreeMemory(*buffer)    
-      EndIf 
+        If *buffer 
+          FreeMemory(*buffer)
+        EndIf   
+      Else 
+        Debug "proxy send " + Str(error) 
+        
+      EndIf
+      FreeMemory(*data) 
     Else 
       Debug "failed to open connection" 
     EndIf  

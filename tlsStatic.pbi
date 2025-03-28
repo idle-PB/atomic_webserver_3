@@ -1,4 +1,4 @@
-﻿;V 1.0.2b
+﻿;V 1.0.3b
 ;author Hexor,infratec,idle
 ;* $OpenBSD: tls.h,v 1.58 2020/01/22 06:44:02 beck Exp $ */
 ;*
@@ -105,7 +105,7 @@ CompilerEndIf
 PrototypeC tls_read_cb(ctx,*buf,_buflen,*cb_arg);
 PrototypeC tls_write_cb(ctx,*buf,_buflen,*cb_arg);
 
-ImportC "pbtls.lib" ;C:\Purebasic\PureLibraries\Windows\Libraries\pbtls.lib" 
+ImportC "pbtls.lib" 
   tls_init()                                                                                                   
   tls_config_error(config)                                                                            
   tls_error(ctx)                                                                                      
@@ -470,7 +470,7 @@ Procedure TLS_ReceiveNetworkData(ClientID, Buffer, Length)
   If *client 
     Result = tls_read(*client\ctx, Buffer, Length)
   Else
-    Result = ReceiveNetworkData(ClientID, Buffer, Length)
+    result = recv_(ConnectionID(clientId),buffer,length,0);ReceiveNetworkData(clientid,Buffer,Length)
   EndIf
   
   UnlockMutex(TLSG\muxClient)
@@ -489,7 +489,7 @@ Procedure TLS_SendNetworkData(ClientID, Buffer, Length)
   If *client   
     Result = tls_write(*client\ctx, Buffer, Length)
   Else
-    Result = SendNetworkData(ClientID, Buffer, Length)
+    Result = send_(ConnectionID(clientId),Buffer,length,0) ;SendNetworkData(clientid,Buffer,Length) 
   EndIf
   
   UnlockMutex(TLSG\muxClient)
@@ -609,3 +609,4 @@ EndMacro
 CompilerIf #TLS_AUTOINIT
   __MyInit()
 CompilerEndIf
+
