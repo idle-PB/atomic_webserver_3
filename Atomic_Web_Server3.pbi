@@ -716,7 +716,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
              Debug "error " + Str(error) 
            EndIf   
           If (MaxRequest > 0 And MaxRequest < *Atomic_server\UploadSize)  
-            Request = PeekS(*Buffer, MaxRequest, #PB_UTF8)
+            Request = PeekS(*Buffer, MaxRequest, #PB_UTF8 | #PB_ByteLength)
           EndIf 
           
           If *buffer <> 0
@@ -767,12 +767,6 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             CloseNetworkConnection(clientid)
             
           EndIf 
-          
-;         Else 
-;             PrintN("Bad Request " + Str(clientid) + " recived " + Str(result))
-;             CloseNetworkConnection(clientid)
-;         EndIf 
-          
           
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()

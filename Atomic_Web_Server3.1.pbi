@@ -768,12 +768,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             CloseNetworkConnection(clientid)
             
           EndIf 
-          
-;         Else 
-;             PrintN("Bad Request " + Str(clientid) + " recived " + Str(result))
-;             CloseNetworkConnection(clientid)
-;         EndIf 
-          
+                   
           
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
@@ -1872,9 +1867,7 @@ Procedure Atomic_Server_Init_TLS(server,path.s,domain.s,CertFile.s,KeyFile.s,CaC
   Debug *atomic_server\CertFile
     
   UseNetworkTLS(*atomic_server\KeyFile,*atomic_server\CertFile,*atomic_server\CaCertFile)
-    
-  ;CallDebugger 
-  ;Init_TLS(domain,*atomic_server\CertFile,*atomic_server\KeyFile,*atomic_server\CaCertFile,path) 
+     
 EndProcedure  
 
 Procedure Atomic_Server_Start(server,window=-1,bLog=0)  
