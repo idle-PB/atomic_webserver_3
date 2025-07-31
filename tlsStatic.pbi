@@ -1,4 +1,4 @@
-﻿;V 1.0.3b
+﻿;V 1.0.4b
 ;author Hexor,infratec,idle
 ;* $OpenBSD: tls.h,v 1.58 2020/01/22 06:44:02 beck Exp $ */
 ;*
@@ -86,17 +86,18 @@
 #TLS_TICKET_KEY_SIZE       = 48
 
 CompilerIf Defined(PB_Network_TLSv1, #PB_Constant) = 0
-  #PB_Network_TLSv1_0     = $10
-  #PB_Network_TLSv1_1     = $20
-  #PB_Network_TLSv1_2     = $40
-  #PB_Network_TLSv1_3     = $80
-    
+  
+  #PB_Network_TLSv1_0     = #TLS_PROTOCOL_TLSv1_0 << 1
+  #PB_Network_TLSv1_1     = #TLS_PROTOCOL_TLSv1_1 << 1
+  #PB_Network_TLSv1_2     = #TLS_PROTOCOL_TLSv1_2 << 1
+  #PB_Network_TLSv1_3     = #TLS_PROTOCOL_TLSv1_3 << 1 
   #PB_Network_TLSv1       = #PB_Network_TLSv1_0 | #PB_Network_TLSv1_1 | #PB_Network_TLSv1_2 | #PB_Network_TLSv1_3
-CompilerEndIf     
+CompilerEndIf  
+
   #PB_Network_TLS_DEFAULT = #PB_Network_TLSv1_2 | #PB_Network_TLSv1_3
   #PB_Network_KeepAlive   = $1000
   #PB_Network_Extra       = #PB_Network_TLSv1 | #PB_Network_KeepAlive
-;CompilerEndIf
+
 
 CompilerIf Defined(TLS_AUTOINIT, #PB_Constant) = #False
   #TLS_AUTOINIT = #True
@@ -105,7 +106,7 @@ CompilerEndIf
 PrototypeC tls_read_cb(ctx,*buf,_buflen,*cb_arg);
 PrototypeC tls_write_cb(ctx,*buf,_buflen,*cb_arg);
 
-ImportC "pbtls.lib" 
+ImportC "" 
   tls_init()                                                                                                   
   tls_config_error(config)                                                                            
   tls_error(ctx)                                                                                      
@@ -197,10 +198,6 @@ ImportC "pbtls.lib"
   tls_peer_ocsp_url(ctx)                                                                                                             
 EndImport
 
-Structure TLS_Connections
-  *ctx
-EndStructure
-
 Structure TLS_Certs 
   Path$
   CertFile$
@@ -208,6 +205,22 @@ Structure TLS_Certs
   CaCertFile$
   domain$
 EndStructure 
+
+Structure TLS_Report 
+  host.s
+  version.s
+  cipher.s
+  subject.s
+  issuer.s
+  validFrom.q
+  validUntil.q
+  hash.s
+EndStructure  
+
+Structure TLS_Connections
+  *ctx 
+   report.TLS_Report 
+EndStructure
 
 Structure TLS_Globals
   CertFile$
@@ -252,11 +265,97 @@ Procedure TLS_GetLastError()
   ProcedureReturn TLSG\LastError
 EndProcedure
 
+Procedure.s _PEEKS(*ptr,len,type) 
+  If *PTR 
+    ProcedureReturn PeekS(*ptr,len,type)   
+  Else 
+    ProcedureReturn "" 
+  EndIf   
+EndProcedure     
+
+Macro TLS_PS(func) 
+  _PeekS(func,-1,#PB_UTF8) 
+EndMacro 
+
+Procedure TLS_report(*ctx.TLS_Connections)
+  
+  Protected t, ocsp_url.s,*ptr,*tls_ctx;
+  *tls_ctx = *ctx\ctx 
+  If *ctx\report\version = "" 
+    *ctx\report\version = TLS_PS(tls_conn_version(*tls_ctx)) 
+    *ctx\report\cipher =  TLS_PS(tls_conn_cipher(*tls_ctx)) 
+    *ctx\report\subject = TLS_PS(tls_peer_cert_subject(*tls_ctx)) 
+    *ctx\report\issuer =  TLS_PS(tls_peer_cert_issuer(*tls_ctx))
+    *ctx\report\hash =    TLS_PS(tls_peer_cert_hash(*tls_ctx))
+    *ctx\report\validFrom = tls_peer_cert_notbefore(*tls_ctx) 
+    *ctx\report\validUntil = tls_peer_cert_notafter(*tls_ctx)  
+  EndIf 
+    
+;   CompilerIf #PB_Compiler_Debugger 
+;   ;not tested yet and probably not required anymore as it's getting dropped soon  
+;   *ptr = tls_peer_ocsp_url(*tls_ctx)
+;   If *ptr 
+;     ocsp_url = tls_PS(*ptr)
+;     
+;     Debug "OCSP URL: " + ocsp_url;
+;     t = tls_peer_ocsp_response_status(*tls_ctx) 
+;     If t = #TLS_OCSP_RESPONSE_SUCCESSFUL   
+;       Debug "OCSP Stapling: " + TLS_PS(tls_peer_ocsp_result(*tls_ctx))
+;       Debug "response_status= " + TLS_PS(tls_peer_ocsp_response_status(*tls_ctx))
+;       Debug "cert_status= "  +  TLS_PS(tls_peer_ocsp_cert_status(*tls_ctx))
+;       Debug "crl_reason= " +  TLS_PS(tls_peer_ocsp_crl_reason(*tls_ctx))
+;       t = tls_peer_ocsp_this_update(*tls_ctx)                             
+;       If t <> - 1 
+;         Debug "this update: " + FormatDate("%hh:%dd:%mm:%yy",t)
+;       EndIf   
+;       t =  tls_peer_ocsp_next_update(*tls_ctx);
+;       If t <> - 1
+;         Debug "next update: " + FormatDate("%hh:%dd:%mm:%yy",t)
+;       EndIf 
+;       t =  tls_peer_ocsp_revocation_time(*tls_ctx)
+;       If t <> -1 
+;         Debug "revocation: " + FormatDate("%hh:%dd:%mm:%yy",t)
+;       EndIf                                                 
+;     ElseIf t <> -1 
+;       Debug "OCSP Stapling:  failure - response_status " + Str(t) + " " + TLS_PS(tls_peer_ocsp_result(*tls_ctx))
+;       
+;     EndIf
+;     
+;   EndIf
+;   
+;   CompilerEndIf 
+  
+  ProcedureReturn @*ctx\report
+  
+EndProcedure 
+
+Procedure TLS_ReportClient(clientID) 
+  
+  If FindMapElement(TLSG\Clients(),Str(clientID)) 
+    ProcedureReturn TLS_report(TLSG\Clients())
+  EndIf  
+  
+EndProcedure 
+
 Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
   Protected TLSMode, ServerID, *ctx, *cfg, *Error, SockOpt.l, SockOptLen.l
   
-  If Mode & #PB_Network_TLSv1
-    TLSMode = #PB_Network_TLSv1
+  CompilerIf #PB_Compiler_Version <= 620 
+    tlsmode = ((mode & $ffffff0) >> 1)  
+    If mode & $10000000 
+      mode = #PB_Network_IPv6 | (mode & 3) 
+    Else   
+      mode = mode & 3 
+    EndIf 
+       
+  CompilerElse 
+    tlsmode = ((mode & $ffffff0) >> 1 )  
+    mode = mode & 3  
+  CompilerEndIf 
+   
+  
+  If TLSG\DLL And tlsMode 
+    
     TLSG\LastError = #TLS_Error_None 
     *ctx = tls_server()
     If *ctx 
@@ -282,6 +381,10 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
           TLSG\LastError = #TLS_Error_Unsupported_Protocol
         EndIf
         
+        If tls_config_verify_client_optional(*cfg) = -1 
+          TLSG\LastError = #TLS_Error_Configure_Error 
+        EndIf   
+        
         If tls_configure(*ctx, *cfg) = -1
           TLSG\LastError = #TLS_Error_Configure_Error 
           *Error = tls_config_error(*cfg)
@@ -293,7 +396,6 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
       EndIf 
       
       If *ctx 
-        Mode = Mode & ($FFFFFFFF - #PB_Network_Extra)
         ServerID = CreateNetworkServer(Server, Port, mode, BindedIP)
         If ServerID
           Protected iocontext   
@@ -306,6 +408,8 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
             LockMutex(TLSG\muxSever) 
             AddMapElement(TLSG\Servers(), Str(ServerID(ServerID)))
             TLSG\Servers()\ctx = *ctx
+            FirstElement(TLSG\certs())
+            TLSG\Servers()\report\host = TLSG\certs()\domain$ 
             UnlockMutex(TLSG\muxSever) 
           EndIf
         EndIf
@@ -314,7 +418,6 @@ Procedure TLS_CreateNetworkServer(Server, Port, Mode, BindedIP.s)
       TLSG\LastError = #TLS_Error_Cant_Start_Server
     EndIf
   Else
-    mode = #PB_Network_IPv4 | #PB_Network_TCP
     ServerID = CreateNetworkServer(Server, Port, Mode, BindedIP)
   EndIf
   
@@ -335,7 +438,6 @@ Procedure TLS_NetworkServerEvent(ServerID)
       *server = FindMapElement(TLSG\Servers(), Str(Server))
       
       If *server 
-        ;TLS!
         ClientID = EventClient()
         If tls_accept_socket(*server\ctx, @ctx, ConnectionID(ClientID)) = -1
           CloseNetworkConnection(ClientID)
@@ -345,10 +447,13 @@ Procedure TLS_NetworkServerEvent(ServerID)
           
           AddMapElement(TLSG\Clients(),Str(ClientID))
           TLSG\Clients()\ctx = ctx
+          
           If tls_handshake(ctx) = -1 
            CloseNetworkConnection(ClientID) 
            DeleteMapElement(TLSG\Clients(),Str(ClientID))
            Result = #PB_NetworkEvent_None
+          Else 
+            TLS_report(@TLSG\Clients())  
           EndIf 
           
           UnlockMutex(TLSG\muxClient)  
@@ -398,11 +503,18 @@ EndProcedure
 Procedure TLS_OpenNetworkConnection(ServerName$, Port, Mode, TimeOut, LocaleIP$, LocalePort)
   Protected TLSMode, ClientID, *ctx, *cfg, *Error, SockOpt.l, SockOptLen.l
   
-  If Mode & #PB_Network_TLSv1
-    TLSMode = (Mode & #PB_Network_TLSv1) >> 3
-    Mode    = Mode & ($FFFFFFFF - #PB_Network_Extra)
-  EndIf
-  
+  CompilerIf #PB_Compiler_Version <= 620 
+    tlsmode = ((mode & $ffffff0) >> 1)  
+    If mode & $10000000 
+      mode = #PB_Network_IPv6 | (mode & 3) 
+    Else   
+      mode = mode & 3 
+    EndIf 
+  CompilerElse 
+    tlsmode = ((mode & $ffffff0) >> 1 )  
+    mode = mode & 3  
+  CompilerEndIf 
+    
   If TLSG\DLL And TLSMode
     *cfg = tls_config_new()
     If *cfg = 0
@@ -445,9 +557,12 @@ Procedure TLS_OpenNetworkConnection(ServerName$, Port, Mode, TimeOut, LocaleIP$,
         ClientID = OpenNetworkConnection(ServerName$, Port, Mode, TimeOut, LocaleIP$, LocalePort)
         If ClientID
           tls_connect_socket(*ctx, ConnectionID(ClientID), ServerName$)
+          tls_handshake(*ctx) 
           LockMutex(TLSG\muxClient) 
           AddMapElement(TLSG\Clients(), Str(ClientID))
           TLSG\Clients()\ctx = *ctx 
+          TLSG\Clients()\report\host = ServerName$
+          TLS_report(@TLSG\Clients())
           UnlockMutex(TLSG\muxClient) 
         EndIf
       EndIf
@@ -470,7 +585,7 @@ Procedure TLS_ReceiveNetworkData(ClientID, Buffer, Length)
   If *client 
     Result = tls_read(*client\ctx, Buffer, Length)
   Else
-    result = recv_(ConnectionID(clientId),buffer,length,0);ReceiveNetworkData(clientid,Buffer,Length)
+    Result = ReceiveNetworkData(ClientID, Buffer, Length)
   EndIf
   
   UnlockMutex(TLSG\muxClient)
@@ -485,11 +600,11 @@ Procedure TLS_SendNetworkData(ClientID, Buffer, Length)
   LockMutex(TLSG\muxClient) 
   
   *client = FindMapElement(TLSG\Clients(), Str(ClientID))
-  
-  If *client   
+   
+  If *client <> 0   
     Result = tls_write(*client\ctx, Buffer, Length)
   Else
-    Result = send_(ConnectionID(clientId),Buffer,length,0) ;SendNetworkData(clientid,Buffer,Length) 
+    Result = SendNetworkData(ClientID, Buffer, Length)
   EndIf
   
   UnlockMutex(TLSG\muxClient)
@@ -553,9 +668,8 @@ EndProcedure
 Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "",caPath$="")
   
   Protected Result = #TLS_Error_InitFailed
-  
-    If tls_init() = 0
-      TLSG\DLL = 1 
+  If tlsg\DLL 
+    If tls_init() = 0; TLS_Error_None
       AddElement(TLSG\certs())
       tlsg\certs()\Path$ = caPath$
       TLSG\certs()\domain$ = Domain$ 
@@ -570,7 +684,8 @@ Procedure Init_TLS(Domain$="",CertFile$ = "", KeyFile$ = "", CaCertFile$ = "",ca
       EndIf   
       Result  = #TLS_Error_None
     EndIf
-   
+  EndIf 
+  
   ProcedureReturn Result
 EndProcedure
 
@@ -610,3 +725,63 @@ CompilerIf #TLS_AUTOINIT
   __MyInit()
 CompilerEndIf
 
+;-Demo from infratec
+CompilerIf #PB_Compiler_IsMainFile
+  
+  Define.i Con, Timeout, Length
+  Define Receive$
+  Define *Buffer
+  Define *report.TLS_Report 
+  
+  Con = OpenNetworkConnection("atomicwebserver.com", 443, #PB_Network_TCP | #PB_Network_IPv4 | #PB_Network_TLS_DEFAULT)
+  If Con
+    *report = TLS_ReportClient(con) 
+    If *report  
+      Debug "TLS handshake negotiated with " + *report\version + " " +  *report\cipher + " host " + *report\host
+      Debug "Subject: " + *report\subject 
+      Debug "Issuer: " + *report\issuer
+      Debug "Valid From: " + FormatDate("%hh:%dd:%mm:%yy",*report\validFrom)
+      Debug "Valid Until: " + FormatDate("%hh:%dd:%mm:%yy",*report\validUntil)
+      Debug "Cert Hash: " + *report\hash
+      Debug ""
+    EndIf 	
+        
+    *Buffer = AllocateMemory($FFFF, #PB_Memory_NoClear)
+    If *Buffer
+      
+      SendNetworkString(Con, "GET / HTTP/1.1" + #CRLF$ + "Host: atomicwebserver.com" + #CRLF$ + #CRLF$)
+      
+      Timeout = 100
+      Repeat
+        Select NetworkClientEvent(Con)
+          Case #PB_NetworkEvent_Data
+            Repeat
+              Length = ReceiveNetworkData(Con, *Buffer, MemorySize(*Buffer))
+              If Length > 0
+                Receive$ + PeekS(*Buffer, Length, #PB_UTF8 | #PB_ByteLength)
+              EndIf
+            Until Length = 0 Or (Length > 0 And Length <> MemorySize(*Buffer))
+            Break
+            
+          Case #PB_NetworkEvent_Disconnect
+            Break
+            
+          Case #PB_NetworkEvent_None
+            Delay(10)
+            Timeout - 1
+            
+        EndSelect
+      Until Timeout = 0
+      
+      If Receive$ <> ""
+        Debug Receive$
+      EndIf
+      
+      FreeMemory(*Buffer)
+    EndIf
+    
+    CloseNetworkConnection(Con)
+  EndIf
+ 
+  
+CompilerEndIf

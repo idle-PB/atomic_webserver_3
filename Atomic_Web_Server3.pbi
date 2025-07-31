@@ -1,6 +1,6 @@
 EnableExplicit
 ;Atomic Webserver threaded 
-;Version 3.1.0b15 PB6.03 + PB6.20   
+;Version 3.1.0b16 PB6.03 + PB6.20   
 ;Authors Idle
 ;Licence MIT
 ;Supports GET POST HEAD
@@ -14,6 +14,8 @@ EnableExplicit
 ;notes on linux to run a server without sudo the exe    
 ;sudo setcap CAP_NET_BIND_SERVICE=+eip /path/to/binary
 
+;sudo ufw allow proto tcp from any to any port 80,443 
+
 CompilerIf Not #PB_Compiler_Thread 
   MessageRequester("Atomic Web Server v3","Compile with thread safe!")
   End 
@@ -26,7 +28,7 @@ CompilerIf #USETLS
   CompilerIf #PB_Compiler_Version <= 612
     XIncludeFile "tls.pbi" 
   CompilerElse
-    XIncludeFile "tlsstatic.pbi" 
+    XIncludeFile "tlsStatic.pbi" 
   CompilerEndIf   
     
 CompilerEndIf   
@@ -67,14 +69,6 @@ CompilerIf #PB_Compiler_Version <= 604
         ProcedureReturn CFAbsoluteTimeGetCurrent() + Date(2001, 1, 1, 0, 0, 0)
       EndProcedure
   CompilerEndSelect
-CompilerEndIf 
-
-CompilerIf #PB_Compiler_OS <> #PB_OS_Windows 
-  CompilerIf #PB_Compiler_Backend = #PB_Backend_Asm
-      ImportC ""
-        __errno_location()
-     EndImport
-  CompilerEndIf 
 CompilerEndIf 
 
 Structure Atomic_Server_Request 
@@ -168,72 +162,65 @@ EndStructure
 
 Global Atomic_Server_Log_window.Atomic_Server_Log_window
 
-CompilerIf #PB_Compiler_OS = #PB_OS_Windows 
+CompilerIf #PB_Compiler_OS <> #PB_OS_Windows  
   
-  Procedure KeepAlive(ID,set.l=#True) 
-    Protected option.l,oplen.l=4 
-    If setsockopt_(ID,#SOL_SOCKET,#SO_KEEPALIVE,@set,oplen) = 0 
-      If getsockopt_(ID,#SOL_SOCKET,#SO_KEEPALIVE,@option,@oplen ) = 0 
-        ProcedureReturn option    
-      EndIf 
-      ProcedureReturn -1     
-    EndIf   
-    
-  EndProcedure    
+  #SOL_SOCKET = 1
+  #SO_KEEPALIVE = 8
+  #IPPROTO_TCP = 6
+  #TCP_NODELAY = 1
+  #SO_LINGER = 13 
   
-   Procedure TCPNoDelay(ID,set.l=#True)  
-    Protected option.l,oplen.l=4 
-    If setsockopt_(ID,#IPPROTO_TCP,#TCP_NODELAY,@set,oplen) = 0 
-      If getsockopt_(ID,#IPPROTO_TCP,#TCP_NODELAY,@option,@oplen ) = 0 
-        ProcedureReturn option    
-      EndIf 
-      ProcedureReturn -1     
-    EndIf  
-  EndProcedure   
-  
-  Procedure GetSendBufferSize(ID) 
-    Protected option.l,oplen.l=4 
-    If getsockopt_(ID,#SOL_SOCKET,#SO_SNDBUF,@option,@oplen ) = 0 
-      ProcedureReturn option 
-    EndIf 
-  EndProcedure   
-      
-  Structure SO_LINGER_Structure
-    l_onoff.l
-    l_linger.l
-  EndStructure
-    
-  Procedure SetLinger(ConID,bon=1,time=0) 
-    Protected  errno,res,SoLinger.SO_LINGER_Structure
-    SoLinger\l_onoff =bon
-    SoLinger\l_linger = time
-    res = setsockopt_(conid, #SOL_SOCKET, #SO_LINGER, @SoLinger, SizeOf(SO_LINGER_Structure))
-    If res <> 0
-      errno = GetLastError_()
-      Debug errno
-    EndIf
-  EndProcedure 
-    
- CompilerElseIf #PB_Compiler_OS = #PB_OS_Linux   
-  
-  Structure SO_LINGER_Structure
-    l_onoff.l
-    l_linger.l
-  EndStructure
-    
-  Procedure SetLinger(ConID,bon=1,time-0) 
-    Protected  SoLinger.SO_LINGER_Structure
-    SoLinger\l_onoff =bon
-    SoLinger\l_linger = time
-    res = setsockopt_(conid, #SOL_SOCKET, #SO_LINGER, @SoLinger, SizeOf(SO_LINGER_Structure))
-    If res <> 0
-      errno = PeekL(errno_location()) 
-      Debug PeekS(strerror_(errno), -1, #PB_Ascii)
-    EndIf
-  EndProcedure 
 CompilerEndIf   
 
-;-Extra functions 
+Procedure KeepAlive(ID,set.l=#True) 
+  Protected option.l,oplen.l=4 
+  If setsockopt_(ID,#SOL_SOCKET,#SO_KEEPALIVE,@set,oplen) = 0 
+    If getsockopt_(ID,#SOL_SOCKET,#SO_KEEPALIVE,@option,@oplen ) = 0 
+      ProcedureReturn option    
+    EndIf 
+    ProcedureReturn -1     
+  EndIf   
+  
+EndProcedure    
+
+Procedure TCPNoDelay(ID,set.l=#True)  
+  Protected option.l,oplen.l=4 
+  If setsockopt_(ID,#IPPROTO_TCP,#TCP_NODELAY,@set,oplen) = 0 
+    If getsockopt_(ID,#IPPROTO_TCP,#TCP_NODELAY,@option,@oplen ) = 0 
+      ProcedureReturn option    
+    EndIf 
+    ProcedureReturn -1     
+  EndIf  
+EndProcedure   
+
+CompilerIf #PB_Compiler_OS = #PB_OS_Linux 
+  ImportC "-lc" 
+    __errno_location() 
+  EndImport   
+CompilerEndIf   
+
+Structure SO_LINGER_Structure
+  l_onoff.l
+  l_linger.l
+EndStructure
+
+Procedure SetLinger(ConID,bon=1,time=0) 
+  Protected  errno,res,SoLinger.SO_LINGER_Structure
+  SoLinger\l_onoff =bon
+  SoLinger\l_linger = time
+  res = setsockopt_(conid, #SOL_SOCKET, #SO_LINGER, @SoLinger, SizeOf(SO_LINGER_Structure))
+  If res <> 0
+    CompilerIf #PB_Compiler_OS = #PB_OS_Windows  
+      errno = GetLastError_()
+      Debug errno
+    CompilerElse 
+      errno = PeekL(__errno_location()) 
+      Debug PeekS(strerror_(errno), -1, #PB_Ascii)
+    CompilerEndIf
+  EndIf
+EndProcedure 
+    
+ ;-Extra functions 
 #PB_Network_Error_Fatal = -1 
 #PB_Network_Error_timeout = -2 
 #PB_Network_Error_Dropped = -3 
@@ -245,23 +232,27 @@ Procedure Atomic_Server_NetworkErrorContinue(ID,val=0)
   #WSA_IO_INCOMPLETE = 996
   #WSA_IO_PENDING = 997
   
-  CompilerIf #PB_Compiler_OS = #PB_OS_Windows 
-    #WSA_IO_INCOMPLETE = 996
-    #WSA_IO_PENDING = 997
-    #WSAEINTR = 10004
-    #WSAEMFILE = 10024
-    #WSAEWOULDBLOCK = 10035
-    #WSAEINPROGRESS = 10036
-    #WSAEALREADY = 10037
-  CompilerElse 
-    #WSAEINTR = 4 ;EINTR 
-    #WSAEMFILE = 17 ;2  ;ENOFILE ENOENT 2 
-    #WSAEWOULDBLOCK = 11 ;Eagain  
-    #WSAEINPROGRESS = 115 ;EINPROGRESS
-    #WSAEALREADY = 114   ;EALREADY 
-  CompilerEndIf 
-   
-  
+  CompilerSelect #PB_Compiler_OS
+    CompilerCase #PB_OS_Windows 
+      #WSAEINTR = 10004
+      #WSAEMFILE = 10024
+      #WSAEWOULDBLOCK = 10035
+      #WSAEINPROGRESS = 10036
+      #WSAEALREADY = 10037
+    CompilerCase #PB_OS_Linux
+      #WSAEINTR = 4         ; EINTR 
+      #WSAEMFILE = 17       ; ENOFILE 
+      #WSAEWOULDBLOCK = 11  ; Eagain  
+      #WSAEINPROGRESS = 115 ; EINPROGRESS
+      #WSAEALREADY = 114    ; EALREADY 
+    CompilerCase #PB_OS_MacOS
+      #WSAEINTR = 4         ; EINTR 
+      #WSAEMFILE = 24       ; EMFILE 
+      #WSAEWOULDBLOCK = 35  ; EWOULDBLOCK = EAGAIN  
+      #WSAEINPROGRESS = 36  ; EINPROGRESS
+      #WSAEALREADY = 37     ; EALREADY 
+  CompilerEndSelect
+    
   #TLS_WANT_POLLIN  = -2
   #TLS_WANT_POLLOUT = -3
     
@@ -289,7 +280,7 @@ Procedure Atomic_Server_NetworkErrorContinue(ID,val=0)
   Select error 
     Case 0 
       ret = 0
-       Debug "None"
+       Debug "None " + Str(val) 
     Case  #WSAEWOULDBLOCK  
       ret = 1 
       Debug "#WSAEWOULDBLOCK"
@@ -315,36 +306,6 @@ Procedure Atomic_Server_NetworkErrorContinue(ID,val=0)
   ProcedureReturn ret 
   
 EndProcedure  
-
-Procedure Atomic_server_PeekMessage(clientid) 
-  
-  Protected *buffer = AllocateMemory(8096)   
-  Protected timeout = ElapsedMilliseconds() + 5000 
-  Protected result, message.s 
-  Repeat 
-    
-    result = ReceiveNetworkData(clientid,*buffer,8096); 
-    If result < 0 
-      If Atomic_Server_NetworkErrorContinue(clientid) 
-        Delay(10)
-        Continue 
-      Else 
-        FreeMemory(*buffer)
-        ProcedureReturn 0 
-      EndIf   
-    ElseIf result = 0 
-      FreeMemory(*buffer) 
-      ProcedureReturn 0 
-    Else   
-      message.s = URLDecoder(PeekS(*buffer,1024,#PB_UTF8 | #PB_ByteLength))
-      Debug message
-      If FindString(message,"GET") Or FindString(message,"HEAD") Or FindString(message,"POST") 
-        ProcedureReturn *buffer 
-      EndIf   
-    EndIf  
-  Until ElapsedMilliseconds() > timeout 
-    
-EndProcedure   
 
 Procedure Atomic_Server_ReceiveNetworkDataEx(clientId,len,timeout=15000,mutex=0,*error.Integer=0) 
   
@@ -658,7 +619,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
   If *Atomic_server\Port <> 443 
     atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer,*Atomic_server\IP)  
   Else   
-    atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_NetworK_TLS_DEFAULT,*Atomic_server\IP)
+    atomicserver = CreateNetworkServer(#PB_Any,*Atomic_Server\Port,#PB_Network_TCP | *Atomic_server\IpVer | #PB_Network_TLSv1 ,*Atomic_server\IP)
   EndIf 
   
   If atomicserver
@@ -716,7 +677,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
              Debug "error " + Str(error) 
            EndIf   
           If (MaxRequest > 0 And MaxRequest < *Atomic_server\UploadSize)  
-            Request = PeekS(*Buffer, MaxRequest, #PB_UTF8 | #PB_ByteLength)
+            Request = PeekS(*Buffer, MaxRequest, #PB_UTF8)
           EndIf 
           
           If *buffer <> 0
@@ -767,7 +728,7 @@ Procedure Atomic_Server_Thread(*Atomic_server.Atomic_Server)
             CloseNetworkConnection(clientid)
             
           EndIf 
-          
+                
         Case #PB_NetworkEvent_Disconnect 
           ClientID = EventClient()
           If FindMapElement(clients(),Str(clientID))  
@@ -823,17 +784,17 @@ Procedure Atomic_Server_deflate(*request.Atomic_Server_Request,*input,len)
   
 EndProcedure   
 
-Structure ara
-  a.a[0] 
-EndStructure
+ Structure Atomic_ara
+   a.a[0] 
+ EndStructure
 
-Procedure Atomic_server_search(*pinput,inlen,*pat.ara,palen,pos=0)
+Procedure Atomic_server_search(*pinput,inlen,*pat.Atomic_ara,palen,pos=0)
   ;booyer moore search 
   Protected i,t,len,skip,*input, *pa.Ascii,*pb.Ascii   
-  Structure ST
+  Structure AST
     a.a[256] 
   EndStructure  
-  Static skiptable.ST 
+  Static skiptable.AST 
   inlen-pos 
   *input = *pinput+pos 
   len = inlen - palen
@@ -1149,10 +1110,10 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
     timeout = ElapsedMilliseconds() + 1500
     con =  OpenNetworkConnection(*Atomic_Server\proxy()\IP,*Atomic_Server\proxy()\port,#PB_Network_TCP | *Atomic_Server\IpVer,5000)    
     If con   
-      SetLinger(ConnectionID(con),1,0)
+      ;SetLinger(ConnectionID(con),1,0)
       Protected error.i
       Protected *Data = UTF8(*request\Request)
-      If Atomic_Server_SendNetworkDataEX(con,*data,MemorySize(*data),5000,0,@error)  ;SendNetworkString(con,*request\Request,#PB_UTF8) 
+      If Atomic_Server_SendNetworkDataEX(con,*data,MemorySize(*data),5000,0,@error)   
         Repeat
           Delay(1)
         Until (NetworkClientEvent(con) = #PB_NetworkEvent_Data Or ElapsedMilliseconds() > timeout) 
@@ -1167,7 +1128,7 @@ Procedure Atomic_Server_Reverse_Proxy(*request.Atomic_Server_Request)
             Debug "Failed to send" 
           EndIf 
         Else 
-          Debug "proxy send error " + Str(error) 
+          Debug "proxy recive error " + Str(error) 
           
         EndIf 
         CloseNetworkConnection(con) 
@@ -1268,7 +1229,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
           EndIf   
           
           atomic_request\RequestedFile = ReplaceString(atomic_request\RequestedFile,"//","/")
-          
+          Debug atomic_request\RequestedFile
           If Atomic_server_Reverse_Proxy(@atomic_request) = 0 ;if were not proxying 
             
             If *Atomic_Server\packAddress 
@@ -1323,7 +1284,7 @@ Procedure Atomic_Server_ProcessRequest(*Atomic_Client.Atomic_Server_Client)
             Else
               If count > 0  ;if there are parameters call post or get callbacks 
                 If atomic_request\type = #ATOMIC_SERVER_POST
-                  If *Atomic_Server\pCBPost 
+                 If *Atomic_Server\pCBPost 
                     *Atomic_Server\pCBPost(@atomic_request)
                   EndIf
                 ElseIf *Atomic_Server\pCBGet 
